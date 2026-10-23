@@ -304,56 +304,140 @@ with tab_ingest:
         "系统将自动完成 **多模态转录 ➔ 术语清洗 ➔ 语义分块 ➔ 原子主张提炼 ➔ 检索索引同步** 全流程。"
     )
 
-    with st.expander("✨ 录入并一键更新知识库 (Add New Video)", expanded=True):
-        col_url, col_title = st.columns([2, 2])
-        with col_url:
-            in_url = st.text_input("抖音视频网页链接 (Video URL)", placeholder="https://www.douyin.com/video/7220000000000000001")
-        with col_title:
-            in_title = st.text_input("视频标题 (Title)", placeholder="例如：美债收益率与财政赤字分析")
+    ingest_mode = st.radio("请选择收录模式:", ["单条视频收录 (Single Video)", "📂 博主主页全量批量蒸馏 (Batch Creator Corpus)"], horizontal=True)
 
-        in_date = st.date_input("发布日期 (Publish Date)")
-        
-        st.markdown("**资料输入方式 (二选一或结合使用):**")
-        method_tab1, method_tab2 = st.tabs(["📝 粘贴视频文本/转录稿 (Fast Text)", "🎵 上传音视频文件 (Audio/Video File)"])
-        
-        in_transcript = None
-        in_media_file = None
-        
-        with method_tab1:
-            in_transcript = st.text_area(
-                "粘贴视频转录稿文本 (可包含创作者发言内容)",
-                placeholder="创作者在视频中说道：当美债供给放量，一级交易商承接力有限，买家只能要求更高的期限溢价...",
-                height=150
-            )
-        with method_tab2:
-            in_media_file = st.file_uploader("上传音视频文件 (支持 mp4, mp3, wav, m4a)", type=["mp4", "mp3", "wav", "m4a"])
+    if ingest_mode == "单条视频收录 (Single Video)":
+        with st.expander("✨ 录入单条视频并更新知识库", expanded=True):
+            col_url, col_title = st.columns([2, 2])
+            with col_url:
+                in_url = st.text_input("抖音视频网页链接 (Video URL)", placeholder="https://www.douyin.com/video/7220000000000000001")
+            with col_title:
+                in_title = st.text_input("视频标题 (Title)", placeholder="例如：美债收益率与财政赤字分析")
 
-        if st.button("🚀 一键提炼并同步知识库 (1-Click Extract & Sync)", type="primary"):
-            if not in_url or not in_title:
-                st.error("请至少填写视频链接与视频标题。")
-            else:
-                with st.spinner("正在执行知识蒸馏流水线，请稍候..."):
-                    media_path = None
-                    if in_media_file:
-                        temp_save = Path("./data/audio") / in_media_file.name
-                        temp_save.parent.mkdir(parents=True, exist_ok=True)
-                        with open(temp_save, "wb") as f:
-                            f.write(in_media_file.getbuffer())
-                        media_path = temp_save
+            in_date = st.date_input("发布日期 (Publish Date)")
+            
+            st.markdown("**资料输入方式 (二选一或结合使用):**")
+            method_tab1, method_tab2 = st.tabs(["📝 粘贴视频文本/转录稿 (Fast Text)", "🎵 上传音视频文件 (Audio/Video File)"])
+            
+            in_transcript = None
+            in_media_file = None
+            
+            with method_tab1:
+                in_transcript = st.text_area(
+                    "粘贴视频转录稿文本 (可包含创作者发言内容)",
+                    placeholder="创作者在视频中说道：当美债供给放量，一级交易商承接力有限，买家只能要求更高的期限溢价...",
+                    height=150
+                )
+            with method_tab2:
+                in_media_file = st.file_uploader("上传音视频文件 (支持 mp4, mp3, wav, m4a)", type=["mp4", "mp3", "wav", "m4a"])
 
-                    res = ctx["pipeline"].process_new_video(
-                        url=in_url,
-                        title=in_title,
-                        media_path=media_path,
-                        transcript_text=in_transcript if in_transcript and in_transcript.strip() else None,
-                        publish_date=str(in_date)
-                    )
+            if st.button("🚀 一键提炼并同步知识库 (1-Click Extract & Sync)", type="primary"):
+                if not in_url or not in_title:
+                    st.error("请至少填写视频链接与视频标题。")
+                else:
+                    with st.spinner("正在执行知识蒸馏流水线，请稍候..."):
+                        media_path = None
+                        if in_media_file:
+                            temp_save = Path("./data/audio") / in_media_file.name
+                            temp_save.parent.mkdir(parents=True, exist_ok=True)
+                            with open(temp_save, "wb") as f:
+                                f.write(in_media_file.getbuffer())
+                            media_path = temp_save
 
-                    if res.get("status") == "success":
-                        st.success(res["message"])
-                        st.balloons()
-                    else:
-                        st.info(res.get("message", "处理完成。"))
+                        res = ctx["pipeline"].process_new_video(
+                            url=in_url,
+                            title=in_title,
+                            media_path=media_path,
+                            transcript_text=in_transcript if in_transcript and in_transcript.strip() else None,
+                            publish_date=str(in_date)
+                        )
+
+                        if res.get("status") == "success":
+                            st.success(res["message"])
+                            st.balloons()
+                        else:
+                            st.info(res.get("message", "处理完成。"))
+    else:
+        with st.expander("📂 批量收录博主主页所有视频 (Batch Process)", expanded=True):
+            st.markdown("""
+            **如何一键获取博主主页全部视频列表 (零风控防封号极速提取)：**
+            1. 在您的日常浏览器中打开该博主主页；
+            2. 向下滚动鼠标，使所有视频加载完成；
+            3. 按键盘 **F12**（或右键 -> 检查）切换到 **Console (控制台)**；
+            4. 粘贴下方脚本并按回车，浏览器会自动下载 `douyin_videos.json`：
+            """)
+            st.code("""(async function() {
+    const items = []; const seen = new Set();
+    document.querySelectorAll('a[href*="/video/"]').forEach(a => {
+        if (!seen.has(a.href)) {
+            seen.add(a.href);
+            let t = (a.innerText || a.getAttribute('title') || '').split('\\n')[0].replace(/#|@/g, '').trim();
+            items.push({ url: a.href, title: t || ('视频_' + a.href.split('/video/')[1]), publish_date: new Date().toISOString().split('T')[0] });
+        }
+    });
+    const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = u; a.download = 'douyin_videos.json'; a.click();
+})();""", language="javascript")
+
+            st.markdown("---")
+            st.markdown("**上传提取好的 `douyin_videos.json` 并开始蒸馏：**")
+            batch_file = st.file_uploader("上传 douyin_videos.json 清单文件", type=["json"])
+            batch_limit = st.number_input("本次处理视频上限 (0 代表全部处理)", min_value=0, max_value=500, value=10)
+
+            if st.button("⚡ 开始批量全量蒸馏", type="primary"):
+                if not batch_file:
+                    st.error("请先上传 douyin_videos.json 文件。")
+                else:
+                    import json
+                    from ingestion.douyin_downloader import DouyinDownloader
+                    videos_data = json.load(batch_file)
+                    if batch_limit > 0:
+                        videos_data = videos_data[:batch_limit]
+
+                    downloader = DouyinDownloader(ctx["config"].knowledge.audio_path)
+                    progress_bar = st.progress(0.0)
+                    status_text = st.empty()
+
+                    success_n = 0
+                    skip_n = 0
+                    total = len(videos_data)
+
+                    for i, v_item in enumerate(videos_data):
+                        v_url = v_item.get("url")
+                        v_title = v_item.get("title", f"视频_{i+1}")
+                        status_text.text(f"[{i+1}/{total}] 正在处理: {v_title}")
+
+                        # Check existing
+                        with ctx["db"].session() as conn:
+                            cur = conn.execute("SELECT ingestion_status FROM videos WHERE video_url = ?;", (v_url,))
+                            row = cur.fetchone()
+                            if row and row["ingestion_status"] == "fully_indexed":
+                                skip_n += 1
+                                progress_bar.progress((i + 1) / total)
+                                continue
+
+                        # Attempt audio download
+                        v_raw = v_url.split("/video/")[1].split("?")[0] if "/video/" in v_url else f"v_{i}"
+                        v_id = f"vid_{v_raw}"
+                        audio_p, err = downloader.download_audio_from_url(v_url, v_id)
+
+                        try:
+                            ctx["pipeline"].process_new_video(
+                                url=v_url,
+                                title=v_title,
+                                media_path=audio_p,
+                                transcript_text=v_item.get("transcript"),
+                                publish_date=v_item.get("publish_date")
+                            )
+                            success_n += 1
+                        except Exception as e:
+                            pass
+
+                        progress_bar.progress((i + 1) / total)
+
+                    status_text.text(f"🎉 批量蒸馏完成！成功: {success_n} 个，跳过已处理: {skip_n} 个。")
+                    st.success(f"已完成批处理！共成功同步 {success_n} 个视频的逻辑框架至知识库。")
 
     st.markdown("---")
     st.markdown("#### 📋 已收录视频库清单 (Video Inventory)")
