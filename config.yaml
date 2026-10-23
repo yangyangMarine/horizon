@@ -1,0 +1,43 @@
+app:
+  name: "Horizon: Macro Investor AI Expert"
+  version: "0.1.0"
+  language: "zh-CN"
+  environment: "${APP_ENV:-development}"
+
+llm:
+  provider: "${LLM_PROVIDER:-gemini}"
+  model: "${GEMINI_MODEL:-gemini-3.8-flash}"
+  embedding_model: "${GEMINI_EMBEDDING_MODEL:-gemini-embedding-001}"
+  temperature: 0.2
+  max_output_tokens: 3000
+  timeout_seconds: 120
+
+retrieval:
+  semantic_enabled: true
+  keyword_enabled: true
+  top_k: 8
+  min_relevance_score: 0.2
+  max_context_tokens: 16000
+
+knowledge:
+  package_path: "${EXPERT_PACKAGE_PATH:-./expert_pack}"
+  transcript_path: "${TRANSCRIPT_PATH:-./data/transcripts}"
+  index_path: "${INDEX_PATH:-./data/index}"
+  audio_path: "${AUDIO_PATH:-./data/audio}"
+  export_path: "${EXPORT_PATH:-./data/exports}"
+
+storage:
+  database_path: "${DATABASE_PATH:-./data/app.db}"
+
+security:
+  authentication_required: true
+  allow_registration: false
+  session_timeout_minutes: 1440
+  max_login_attempts: 5
+  lockout_minutes: 15
+
+limits:
+  max_question_characters: 10000
+  max_requests_per_minute: 10
+  daily_request_limit: 200
+  monthly_budget_usd: 50.0

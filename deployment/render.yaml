@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: horizon-macro-expert
+    runtime: python
+    plan: standard
+    buildCommand: "pip install -r requirements.txt && python scripts/build_index.py"
+    startCommand: "streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false"
+    disk:
+      name: horizon-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 10
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: APP_ENV
+        value: production
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_PATH
+        value: ./data/app.db
+      - key: EXPERT_PACKAGE_PATH
+        value: ./expert_pack
+      - key: INDEX_PATH
+        value: ./data/index
+      - key: MONTHLY_BUDGET_USD
+        value: "50.0"

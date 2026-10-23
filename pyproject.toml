@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "macro-investor-expert"
+version = "0.1.0"
+description = "Private, Portable AI Investment Expert Website with Video Knowledge Distillation"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Horizon Team" }]
+license = { text = "MIT" }
+dependencies = [
+    "streamlit>=1.40.0",
+    "google-genai>=2.30.0",
+    "pydantic>=2.10.0",
+    "pyyaml>=6.0.0",
+    "python-dotenv>=1.0.0",
+    "bcrypt>=4.0.0",
+    "pandas>=2.2.0",
+    "requests>=2.31.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.14.0"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,26 @@
+package_name: horizon-macro-expert-pack
+schema_version: 1.0.0
+package_version: 1.0.0
+author: Horizon
+description: Distilled macroeconomic and investment analytical frameworks from video
+  corpus
+inventory:
+  sources: 6
+  claims: 7
+  cases: 2
+  forecasts: 2
+  evaluation_questions: 8
+  frameworks: 3
+checksums:
+  identity.md: d3e3b7fb07d3b1e2ef3606fe197e6067d2aa30ee0c791ddf057aebe8f4eb2e10
+  reasoning_rules.md: 34eeeedb63a3a0c64eb5b850888898032173a091e04c36146857ed907e16b1f7
+  answer_policy.md: 4651b58ccee7bf04960a3443c114fa3286b22de8db7707b2b203020e33af1f75
+  sources/source_catalog.jsonl: 959432b14550a5cb9d24da8c7ef1cae01e3e5e8153fb2c2292049ce170902295
+  claims/claims.jsonl: 36a96f32a7319f58a9afa897af8be86ca894c8201f5b098bc4d9c72072ec3c57
+  cases/cases.jsonl: a86f14851bbbb9de76c77e44aa5d58a5d87a9416743a9220a78581584688fd50
+  forecasts/forecasts.jsonl: 1846decdaa5208656dcf02dad4c0b41d1a116bc7b47faa98966f5d2f5c1fc95f
+  evaluation/test_questions.jsonl: 35537547340d745815591c58e3e6a72778473a19da2055d1e3f4e9e5a9bf1d48
+  frameworks/liquidity.md: c374b5c102517c2ddd684308c5977b0427128ce3e9acb7ce770489c018ae6cb5
+  frameworks/monetary_policy.md: ea8b2d988a616984db5870c8a97a5e427800871f000dbb115d121b6ed2847550
+  frameworks/sovereign_debt.md: 61108f30db5d0dbdafef1a8b3e78406021f9b9c1da1c8b747f6b3e0825ce3424
+licensing: Private personal use. Transcripts and materials reserved.
