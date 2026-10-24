@@ -16,19 +16,20 @@ class ConversationManager:
     def __init__(self, db: Database):
         self.db = db
 
-    def create_conversation(self, title: str = "新对话") -> str:
+    def create_conversation(self, title: str = "新对话", user_id: str = "default") -> str:
         conv_id = f"conv_{uuid.uuid4().hex[:12]}"
         with self.db.session() as conn:
             conn.execute(
-                "INSERT INTO conversations(conversation_id, title) VALUES (?, ?);",
-                (conv_id, title)
+                "INSERT INTO conversations(conversation_id, title, user_id) VALUES (?, ?, ?);",
+                (conv_id, title, user_id)
             )
         return conv_id
 
-    def list_conversations(self) -> List[Dict[str, Any]]:
+    def list_conversations(self, user_id: str = "default") -> List[Dict[str, Any]]:
         with self.db.session() as conn:
             cur = conn.execute(
-                "SELECT conversation_id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC;"
+                "SELECT conversation_id, title, created_at, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC;",
+                (user_id,)
             )
             return [dict(r) for r in cur.fetchall()]
 

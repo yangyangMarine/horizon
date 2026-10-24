@@ -54,7 +54,8 @@ class MacroExpertEngine:
         self,
         question: str,
         topic: Optional[str] = None,
-        top_k: int = 6
+        top_k: int = 6,
+        system_prompt: Optional[str] = None
     ) -> ExpertResponse:
         # 1. Cost and safety validation
         valid, err_msg = self.cost_controller.validate_request(question)
@@ -100,9 +101,10 @@ class MacroExpertEngine:
         )
 
         # 5. Invoke LLM
+        effective_sys_prompt = system_prompt or self.system_prompt
         llm_result = self.llm.generate(
             prompt=augmented_prompt,
-            system_instruction=self.system_prompt,
+            system_instruction=effective_sys_prompt,
             temperature=self.config.llm.temperature,
             max_output_tokens=self.config.llm.max_output_tokens
         )

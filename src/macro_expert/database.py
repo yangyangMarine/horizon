@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS forecasts (
 CREATE TABLE IF NOT EXISTS conversations (
     conversation_id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    user_id TEXT DEFAULT 'default',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -226,6 +227,10 @@ class Database:
     def init_db(self) -> None:
         with self.session() as conn:
             conn.executescript(SCHEMA_SQL)
+            try:
+                conn.execute("ALTER TABLE conversations ADD COLUMN user_id TEXT DEFAULT 'default';")
+            except Exception:
+                pass
             try:
                 conn.executescript(FTS5_INIT_SQL)
             except sqlite3.OperationalError as e:
