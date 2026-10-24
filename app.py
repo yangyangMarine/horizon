@@ -68,7 +68,37 @@ st.markdown("""
         display: flex !important;
         visibility: visible !important;
         opacity: 1 !important;
-        z-index: 99999 !important;
+        z-index: 999999 !important;
+    }
+
+    /* Style the sidebar expand button (when collapsed) */
+    [data-testid="collapsedControl"] {
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        position: fixed !important;
+        top: 12px !important;
+        left: 12px !important;
+        z-index: 999999 !important;
+        background: #FFFFFF !important;
+        border: 1.5px solid #2563EB !important;
+        border-radius: 10px !important;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.18) !important;
+        padding: 6px 12px !important;
+        cursor: pointer !important;
+        transition: all 0.2s ease !important;
+        align-items: center !important;
+    }
+    [data-testid="collapsedControl"]:hover {
+        background: #EFF6FF !important;
+        transform: scale(1.05) !important;
+    }
+    [data-testid="collapsedControl"]::after {
+        content: " 展开侧栏";
+        font-size: 13px;
+        font-weight: 600;
+        color: #2563EB;
+        margin-left: 6px;
     }
 
     /* 2. Suppress Streamlit Community Cloud 'Manage app' button and bottom-right badges */
@@ -366,13 +396,45 @@ selected_expert = EXPERTS_REGISTRY.get(st.session_state.selected_expert_id, EXPE
 # LEFT SIDEBAR: Navigation, History & Profile
 # ==========================================
 with st.sidebar:
-    st.markdown("""
-    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.6rem;">
-        <span style="font-size: 1.5rem;">🧭</span>
-        <span style="font-size: 1.25rem; font-weight: 700; color: #0F172A;">Horizon</span>
-        <span style="font-size: 0.72rem; background: #EEF2F6; color: #2563EB; font-weight: 700; padding: 2px 6px; border-radius: 4px;">PRO</span>
-    </div>
-    """, unsafe_allow_html=True)
+    col_brand, col_close = st.columns([3.2, 1.8])
+    with col_brand:
+        st.markdown("""
+        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+            <span style="font-size: 1.5rem;">🧭</span>
+            <span style="font-size: 1.25rem; font-weight: 700; color: #0F172A;">Horizon</span>
+            <span style="font-size: 0.72rem; background: #EEF2F6; color: #2563EB; font-weight: 700; padding: 2px 6px; border-radius: 4px;">PRO</span>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_close:
+        # One-click button to collapse/retract sidebar
+        components.html("""
+        <button id="btn-collapse-sidebar" onclick="
+            try {
+                let b = window.parent.document.querySelector('[data-testid=stSidebarCollapseButton]') || 
+                        window.parent.document.querySelector('button[aria-label=\\'Close sidebar\\']') ||
+                        document.querySelector('[data-testid=stSidebarCollapseButton]');
+                if (b) { b.click(); }
+            } catch(e) {}
+        " style="
+            background: #F1F5F9;
+            border: 1px solid #CBD5E1;
+            border-radius: 8px;
+            padding: 6px 10px;
+            color: #475569;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            width: 100%;
+            justify-content: center;
+            font-family: inherit;
+            transition: all 0.2s;
+        " onmouseover="this.style.background='#E2E8F0'; this.style.color='#1E293B'" onmouseout="this.style.background='#F1F5F9'; this.style.color='#475569'">
+            ◀ <b>收起</b>
+        </button>
+        """, height=38)
 
     # 1. Main Functional Navigation
     nav_mode = st.radio(
@@ -393,12 +455,17 @@ with st.sidebar:
             st.session_state.current_conversation_id = None
             st.rerun()
 
-        st.caption("🕒 **历史记录**")
+        st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+        st.markdown("##### 🕒 历史聊天记录")
         user_convs = ctx["conv_mgr"].list_conversations(user_id=current_user)
         history_convs = [c for c in user_convs if c.get("msg_count", 0) > 0]
         
         if not history_convs:
-            st.caption("暂无历史记录，提问后自动保存")
+            st.markdown("""
+            <div style="background: #F8FAFC; border: 1px dashed #CBD5E1; border-radius: 10px; padding: 14px; text-align: center; color: #64748B; font-size: 13px; margin-bottom: 12px;">
+                💬 暂无历史对话<br><span style="font-size: 12px; color: #94A3B8;">发起提问后将自动沉淀记录</span>
+            </div>
+            """, unsafe_allow_html=True)
         else:
             for c in history_convs:
                 cid = c["conversation_id"]
@@ -411,17 +478,30 @@ with st.sidebar:
                     st.rerun()
 
         if st.session_state.current_conversation_id:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🗑️ 删除此记录", use_container_width=True):
+            st.markdown("<div style='margin-top: 6px;'></div>", unsafe_allow_html=True)
+            if st.button("🗑️ 删除当前记录", use_container_width=True):
                 ctx["conv_mgr"].delete_conversation(st.session_state.current_conversation_id)
                 st.session_state.current_conversation_id = None
                 st.rerun()
 
-    # 3. User Profile Card (Always visible right here in sidebar)
+    # 3. User Profile Card (Always directly displayed)
     st.markdown("---")
-    with st.expander(f"{st.session_state.user_avatar} **{current_user}** (个人设置)", expanded=False):
-        st.caption(f"当前账号：`{current_user}` · 超级管理员")
+    st.markdown("##### 👤 个人信息 (Profile)")
 
+    # Directly displayed profile card
+    st.markdown(f"""
+    <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="font-size: 1.8rem; background: #FFFFFF; border-radius: 50%; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">{st.session_state.user_avatar}</div>
+            <div>
+                <div style="font-weight: 700; font-size: 15px; color: #0F172A;">{current_user}</div>
+                <div style="font-size: 12px; color: #16A34A; display: flex; align-items: center; gap: 4px;">● 在线 · 超级管理员</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.expander("⚙️ 账号安全设置 (修改头像/密码)", expanded=False):
         # Avatar Choice
         avatar_opts = ["👤", "💼", "📈", "🧭", "🦁", "🦉", "🚀"]
         cur_idx = avatar_opts.index(st.session_state.user_avatar) if st.session_state.user_avatar in avatar_opts else 0
@@ -439,13 +519,40 @@ with st.sidebar:
             else:
                 st.warning("密码至少为 6 位。")
 
-        # Logout
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("🚪 退出登录", key="btn_logout", use_container_width=True):
-            st.session_state.authenticated = False
-            st.session_state.username = None
-            st.session_state.current_conversation_id = None
-            st.rerun()
+    if st.button("🚪 退出登录", key="btn_logout", use_container_width=True):
+        st.session_state.authenticated = False
+        st.session_state.username = None
+        st.session_state.current_conversation_id = None
+        st.rerun()
+
+    # Bottom helper button to collapse sidebar
+    st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
+    components.html("""
+    <button onclick="
+        try {
+            let b = window.parent.document.querySelector('[data-testid=stSidebarCollapseButton]') || 
+                    window.parent.document.querySelector('button[aria-label=\\'Close sidebar\\']') ||
+                    document.querySelector('[data-testid=stSidebarCollapseButton]');
+            if (b) { b.click(); }
+        } catch(e) {}
+    " style="
+        background: transparent;
+        border: 1px dashed #CBD5E1;
+        border-radius: 8px;
+        padding: 6px 12px;
+        color: #64748B;
+        font-size: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+        justify-content: center;
+        transition: all 0.2s;
+    " onmouseover="this.style.background='#F1F5F9'; this.style.color='#1E293B'" onmouseout="this.style.background='transparent'; this.style.color='#64748B'">
+        ◀ 收起左侧边栏 (Collapse)
+    </button>
+    """, height=36)
 
 
 # ==============================================================================
