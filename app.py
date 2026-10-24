@@ -1,19 +1,20 @@
 """
 app.py
-Horizon: Minimalist, Public-Facing AI Investment Expert Platform (ChatGPT / Gemini Style)
-Features multi-expert knowledge base selector (e.g. Horizon Macro, Aili Investor),
-sleek distraction-free chat UI, conversation history, and hidden admin controls.
+Horizon: Ultra-Minimalist AI Investment Expert Platform (ChatGPT / Gemini Style)
+- Protected behind secure login.
+- Left sidebar: New chat, logged-in user's conversation history, bottom-left account manager (avatar, password change, logout).
+- Chat area: User query right-aligned (colored), Expert answer left-aligned (neutral), no names displayed.
+- Model selector: Seamlessly switch knowledge bases (Horizon Macro, Aili Investor, Liquidity).
+- Strict suppression of Streamlit chrome, GitHub links, and the bottom-right 'Manage app' popup.
 """
 
 import os
-import uuid
 from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from ingestion.pipeline import IngestPipeline
 from src.macro_expert.auth import AuthManager
 from src.macro_expert.citations import format_citations_markdown
 from src.macro_expert.config import load_config
@@ -21,13 +22,12 @@ from src.macro_expert.conversations import ConversationManager
 from src.macro_expert.cost_control import CostController
 from src.macro_expert.database import Database
 from src.macro_expert.expert import MacroExpertEngine
-from src.macro_expert.export import ExportManager
 from src.macro_expert.knowledge_package import KnowledgePackageManager
 from src.macro_expert.llm import get_llm_adapter
 from src.macro_expert.retrieval import HybridRetriever
 
 # ------------------------------------------------------------------------------
-# 1. Page Configuration & Chrome Suppression (Hide Deploy/Manage/GitHub buttons)
+# 1. Page Configuration & Absolute UI Chrome Suppression
 # ------------------------------------------------------------------------------
 st.set_page_config(
     page_title="Horizon - AI 投资决策专家",
@@ -36,86 +36,124 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Strict CSS to hide all Streamlit management chrome, GitHub fork links, and default headers
+# Aggressive CSS to hide all default Streamlit chrome, GitHub fork links, and Manage app popups
 st.markdown("""
 <style>
-    /* Hide Streamlit Header, Footer, and Toolbar */
-    #MainMenu {visibility: hidden !important; display: none !important;}
-    header[data-testid="stHeader"] {visibility: hidden !important; display: none !important;}
-    footer {visibility: hidden !important; display: none !important;}
-    .stDeployButton {display: none !important;}
-    div[data-testid="stDecoration"] {display: none !important;}
-    div[data-testid="stStatusWidget"] {visibility: hidden !important; display: none !important;}
-    div[data-testid="stToolbar"] {display: none !important;}
+    /* Complete suppression of Streamlit Header, Footer, Menu, and Cloud Badges */
+    #MainMenu { display: none !important; visibility: hidden !important; }
+    header[data-testid="stHeader"] { display: none !important; visibility: hidden !important; }
+    footer { display: none !important; visibility: hidden !important; }
+    .stDeployButton { display: none !important; }
+    div[data-testid="stDecoration"] { display: none !important; }
+    div[data-testid="stStatusWidget"] { display: none !important; }
+    div[data-testid="stToolbar"] { display: none !important; }
     
-    /* Hide Streamlit Cloud 'Manage app' and badge elements */
-    iframe[title="manage-app"] {display: none !important;}
-    [data-testid="manage-app-button"] {display: none !important;}
-    .viewerBadge_container__1QSob {display: none !important;}
-    .styles_viewerBadge__1yB5_ {display: none !important;}
-    button[title="View app in Streamlit Community Cloud"] {display: none !important;}
-
-    /* Modern Minimalist Chat Styling */
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 5rem;
-        max-width: 900px;
+    /* Suppress Streamlit Community Cloud 'Manage app' button and bottom-right badges */
+    iframe[title="manage-app"] { display: none !important; visibility: hidden !important; }
+    [data-testid="manage-app-button"] { display: none !important; visibility: hidden !important; }
+    div[class*="viewerBadge"] { display: none !important; visibility: hidden !important; }
+    div[class*="manage-app"] { display: none !important; visibility: hidden !important; }
+    .viewerBadge_container__1QSob { display: none !important; visibility: hidden !important; }
+    .styles_viewerBadge__1yB5_ { display: none !important; visibility: hidden !important; }
+    button[title*="Streamlit Community Cloud"] { display: none !important; visibility: hidden !important; }
+    div[style*="position: fixed"][style*="bottom:"][style*="right:"],
+    div[style*="position:fixed"][style*="bottom:"][style*="right:"] {
+        display: none !important;
+        visibility: hidden !important;
     }
-    
-    /* Welcome Hero Card */
+
+    /* Container sizing & responsive layout */
+    .block-container {
+        padding-top: 1.2rem;
+        padding-bottom: 5rem;
+        max-width: 860px;
+    }
+
+    /* Minimalist Chat Bubble Alignment */
+    /* 1. User Message: Float Right, distinct blue color, no avatar/name */
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]),
+    div[data-testid="stChatMessage"]:has([aria-label="Chat message from user"]) {
+        flex-direction: row-reverse !important;
+        text-align: left !important;
+        margin-left: auto !important;
+        margin-right: 0 !important;
+        max-width: 78% !important;
+        background-color: #2563EB !important;
+        border: none !important;
+        border-radius: 18px 18px 4px 18px !important;
+        padding: 0.75rem 1.15rem !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.06) !important;
+    }
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) p,
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) div {
+        color: #FFFFFF !important;
+        font-size: 0.96rem !important;
+        line-height: 1.5 !important;
+    }
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) div[data-testid="stChatMessageAvatar"] {
+        display: none !important;
+    }
+
+    /* 2. Assistant Message: Float Left, clean neutral gray card, no avatar/name */
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]),
+    div[data-testid="stChatMessage"]:has([aria-label="Chat message from assistant"]) {
+        flex-direction: row !important;
+        text-align: left !important;
+        margin-right: auto !important;
+        margin-left: 0 !important;
+        max-width: 90% !important;
+        background-color: #F8FAFC !important;
+        border: 1px solid #E2E8F0 !important;
+        border-radius: 18px 18px 18px 4px !important;
+        padding: 1rem 1.25rem !important;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02) !important;
+    }
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) p,
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) div {
+        color: #1E293B !important;
+        font-size: 0.96rem !important;
+        line-height: 1.6 !important;
+    }
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) div[data-testid="stChatMessageAvatar"] {
+        display: none !important;
+    }
+
+    /* Hero greeting card */
     .hero-card {
         text-align: center;
-        padding: 3rem 1.5rem;
-        margin-top: 2rem;
-        margin-bottom: 2rem;
+        padding: 2.5rem 1rem 1.5rem 1rem;
+        margin: 1.5rem auto;
     }
     .hero-avatar {
-        font-size: 3.5rem;
-        margin-bottom: 0.8rem;
-    }
-    .hero-title {
-        font-size: 1.8rem;
-        font-weight: 700;
-        color: #1E293B;
+        font-size: 3rem;
         margin-bottom: 0.5rem;
     }
+    .hero-title {
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: #0F172A;
+        margin-bottom: 0.4rem;
+    }
     .hero-subtitle {
-        font-size: 1.05rem;
+        font-size: 0.95rem;
         color: #64748B;
-        max-width: 620px;
-        margin: 0 auto 2rem auto;
-        line-height: 1.6;
-    }
-    
-    /* Prompt Suggestion Card */
-    .suggestion-btn {
-        background-color: #F8FAFC;
-        border: 1px solid #E2E8F0;
-        border-radius: 12px;
-        padding: 1rem;
-        text-align: left;
-        color: #334155;
-        font-size: 0.92rem;
-        transition: all 0.2s ease;
-        margin-bottom: 0.6rem;
-    }
-    .suggestion-btn:hover {
-        border-color: #3B82F6;
-        background-color: #EFF6FF;
+        max-width: 580px;
+        margin: 0 auto 1.8rem auto;
+        line-height: 1.5;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------------------
-# 2. Experts & Knowledge Bases Registry
+# 2. Knowledge Base & Expert Registry
 # ------------------------------------------------------------------------------
 EXPERTS_REGISTRY = {
     "horizon_macro": {
         "id": "horizon_macro",
-        "name": "Horizon 宏观策略专家 (默认)",
+        "name": "Horizon 宏观策略",
         "avatar": "🧭",
         "badge": "宏观流动性 · 美债收益率 · 周期演进",
-        "description": "基于数百期宏观研判视频，精通美联储净流动性、主权债务利息螺旋与长端收益率因果推演。",
+        "description": "基于宏观研判视频蒸馏，专注于美联储净流动性、主权债务利息螺旋与长端收益率因果推演。",
         "prompt_file": "analyst.md",
         "topic_filter": None,
         "sample_prompts": [
@@ -127,7 +165,7 @@ EXPERTS_REGISTRY = {
     },
     "aili": {
         "id": "aili",
-        "name": "Aili (艾莉) 投资研判专家",
+        "name": "Aili (艾莉) 投资决策",
         "avatar": "👩‍💼",
         "badge": "商业壁垒 · 消费与科技 · 估值安全边际",
         "description": "基于博主 Aili 视频蒸馏，专注于产业生命周期S曲线、轻资产高ROE、自由现金流折现与逆向建仓逻辑。",
@@ -142,7 +180,7 @@ EXPERTS_REGISTRY = {
     },
     "liquidity_quant": {
         "id": "liquidity_quant",
-        "name": "全球流动性与汇率智囊",
+        "name": "全球流动性智囊",
         "avatar": "🌊",
         "badge": "央行资负表 · 隔夜逆回购 · 黄金与美元",
         "description": "专注于全球美元潮汐、隔夜逆回购(ON RRP)、财政部发债计划与黄金大宗商品的传导机制。",
@@ -157,7 +195,7 @@ EXPERTS_REGISTRY = {
 }
 
 # ------------------------------------------------------------------------------
-# 3. Context & Singletons
+# 3. Singleton Context Loader
 # ------------------------------------------------------------------------------
 @st.cache_resource
 def get_app_context():
@@ -179,67 +217,86 @@ def get_app_context():
     llm = get_llm_adapter(config)
     cost_ctrl = CostController(db, config.limits)
     expert_engine = MacroExpertEngine(retriever, llm, cost_ctrl, config)
-    export_mgr = ExportManager(config.knowledge.package_path, config.knowledge.export_path, db)
-    pipeline = IngestPipeline(db, llm, config.knowledge.package_path)
 
     return {
         "config": config,
         "db": db,
         "auth_mgr": auth_mgr,
         "conv_mgr": conv_mgr,
-        "retriever": retriever,
-        "llm": llm,
-        "cost_ctrl": cost_ctrl,
-        "expert_engine": expert_engine,
-        "export_mgr": export_mgr,
-        "pipeline": pipeline,
-        "pkg_mgr": pkg_mgr
+        "expert_engine": expert_engine
     }
 
 ctx = get_app_context()
 
 # ------------------------------------------------------------------------------
-# 4. Session State & Visitor Isolation
+# 4. Session State Management
 # ------------------------------------------------------------------------------
-if "visitor_user_id" not in st.session_state:
-    st.session_state.visitor_user_id = f"user_{uuid.uuid4().hex[:8]}"
-
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "username" not in st.session_state:
+    st.session_state.username = None
+if "user_avatar" not in st.session_state:
+    st.session_state.user_avatar = "👤"
 if "selected_expert_id" not in st.session_state:
     st.session_state.selected_expert_id = "horizon_macro"
-
 if "current_conversation_id" not in st.session_state:
     st.session_state.current_conversation_id = None
 
-if "admin_authenticated" not in st.session_state:
-    st.session_state.admin_authenticated = False
+# ------------------------------------------------------------------------------
+# 5. Minimalist Centered Login Screen (Preserved as requested)
+# ------------------------------------------------------------------------------
+if not st.session_state.authenticated:
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 1.3, 1])
+    with col2:
+        st.markdown("""
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <div style="font-size: 2.8rem; margin-bottom: 0.3rem;">🧭</div>
+            <h2 style="margin: 0; font-size: 1.6rem; color: #0F172A; font-weight: 700;">Horizon 投资专家</h2>
+            <p style="color: #64748B; font-size: 0.92rem; margin-top: 0.4rem;">私密便携式投研决策中枢</p>
+        </div>
+        """, unsafe_allow_html=True)
 
+        with st.form("login_form", clear_on_submit=False):
+            u_input = st.text_input("账号 (Username)", placeholder="请输入账号", value="admin")
+            p_input = st.text_input("密码 (Password)", type="password", placeholder="请输入密码")
+            submit = st.form_submit_button("登录验证", use_container_width=True, type="primary")
+
+            if submit:
+                user = ctx["auth_mgr"].authenticate(u_input, p_input)
+                if user:
+                    st.session_state.authenticated = True
+                    st.session_state.username = user["username"]
+                    st.rerun()
+                else:
+                    st.error("账号或密码不正确，请重新输入。")
+    st.stop()
+
+# ------------------------------------------------------------------------------
+# 6. Authenticated Minimalist UI Layout
+# ------------------------------------------------------------------------------
+current_user = st.session_state.username or "admin"
 selected_expert = EXPERTS_REGISTRY.get(st.session_state.selected_expert_id, EXPERTS_REGISTRY["horizon_macro"])
 
-# ------------------------------------------------------------------------------
-# 5. Left Sidebar (ChatGPT / Gemini Style)
-# ------------------------------------------------------------------------------
+# ==========================================
+# LEFT SIDEBAR: History & Account (Bottom-Left)
+# ==========================================
 with st.sidebar:
-    # New Chat Pill
+    # 1. New Chat Button
     if st.button("➕ 新建对话", use_container_width=True, type="primary"):
-        new_cid = ctx["conv_mgr"].create_conversation(
-            title="新对话",
-            user_id=st.session_state.visitor_user_id
-        )
+        new_cid = ctx["conv_mgr"].create_conversation(title="新研判对话", user_id=current_user)
         st.session_state.current_conversation_id = new_cid
         st.rerun()
 
     st.markdown("---")
-    st.caption("🕒 **历史对话 (Recent Chats)**")
+    st.caption("📜 **历史研判记录**")
 
-    user_convs = ctx["conv_mgr"].list_conversations(user_id=st.session_state.visitor_user_id)
+    # 2. Logged-in User's Conversation History Only
+    user_convs = ctx["conv_mgr"].list_conversations(user_id=current_user)
     if not user_convs:
-        # Create initial conversation
-        init_cid = ctx["conv_mgr"].create_conversation(
-            title="新研判对话",
-            user_id=st.session_state.visitor_user_id
-        )
+        init_cid = ctx["conv_mgr"].create_conversation(title="初始宏观研判", user_id=current_user)
         st.session_state.current_conversation_id = init_cid
-        user_convs = ctx["conv_mgr"].list_conversations(user_id=st.session_state.visitor_user_id)
+        user_convs = ctx["conv_mgr"].list_conversations(user_id=current_user)
 
     if not st.session_state.current_conversation_id and user_convs:
         st.session_state.current_conversation_id = user_convs[0]["conversation_id"]
@@ -253,83 +310,66 @@ with st.sidebar:
             st.session_state.current_conversation_id = cid
             st.rerun()
 
-    st.markdown("---")
+    # Clear current chat
     if st.session_state.current_conversation_id:
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("🗑️ 清除此对话", use_container_width=True):
-                ctx["conv_mgr"].delete_conversation(st.session_state.current_conversation_id)
-                st.session_state.current_conversation_id = None
-                st.rerun()
-        with c2:
-            export_md = ctx["conv_mgr"].export_conversation_markdown(st.session_state.current_conversation_id)
-            st.download_button(
-                "📥 导出记录",
-                data=export_md,
-                file_name=f"chat_{st.session_state.current_conversation_id}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🗑️ 删除当前记录", use_container_width=True):
+            ctx["conv_mgr"].delete_conversation(st.session_state.current_conversation_id)
+            st.session_state.current_conversation_id = None
+            st.rerun()
 
-    # Discreet Admin Access (Hidden in bottom expander for owner only)
-    st.markdown("<br><br><br>", unsafe_allow_html=True)
-    with st.expander("⚙️ 知识库管理后台 (Admin Only)", expanded=False):
-        if not st.session_state.admin_authenticated:
-            admin_pwd = st.text_input("管理员密码", type="password", key="admin_pwd_input")
-            if st.button("验证登录", key="admin_login_btn", use_container_width=True):
-                user = ctx["auth_mgr"].authenticate("admin", admin_pwd)
-                if user:
-                    st.session_state.admin_authenticated = True
-                    st.success("管理员权限已解锁")
-                    st.rerun()
-                else:
-                    st.error("密码错误")
-        else:
-            st.success("已登录管理员权限")
-            if st.button("退出管理模式", use_container_width=True):
-                st.session_state.admin_authenticated = False
-                st.rerun()
+    # 3. Bottom-Left Personal Account Management
+    st.markdown("<br><br><br><br>", unsafe_allow_html=True)
+    st.markdown("---")
+    with st.expander(f"{st.session_state.user_avatar} **{current_user} (个人账号)**", expanded=False):
+        st.caption(f"当前登录账号：`{current_user}`")
 
-            st.markdown("---")
-            st.markdown("**视频收录 & 知识蒸馏流水线**")
-            adm_url = st.text_input("抖音视频链接", key="adm_v_url")
-            adm_title = st.text_input("视频标题", key="adm_v_title")
-            adm_trans = st.text_area("视频转录文字稿", key="adm_v_trans", height=100)
-            if st.button("🚀 一键提取入库", use_container_width=True):
-                if adm_url and adm_title:
-                    res = ctx["pipeline"].process_new_video(
-                        url=adm_url,
-                        title=adm_title,
-                        transcript_text=adm_trans if adm_trans else None
-                    )
-                    st.info(res.get("message", "处理完成"))
-                else:
-                    st.error("请填写链接与标题")
+        # Avatar selector
+        avatar_choice = st.selectbox(
+            "个人头像图标",
+            options=["👤", "💼", "📈", "🧭", "🦁", "🦉", "🚀"],
+            index=["👤", "💼", "📈", "🧭", "🦁", "🦉", "🚀"].index(st.session_state.user_avatar) if st.session_state.user_avatar in ["👤", "💼", "📈", "🧭", "🦁", "🦉", "🚀"] else 0
+        )
+        if avatar_choice != st.session_state.user_avatar:
+            st.session_state.user_avatar = avatar_choice
+            st.rerun()
 
-            if st.button("🔄 重建全文检索索引", use_container_width=True):
-                cnt = ctx["pkg_mgr"].sync_to_database()
-                st.success(f"索引重构完成: {cnt}")
+        # Change Password
+        new_pwd = st.text_input("新登录密码", type="password", key="new_pwd_inp")
+        if st.button("更新密码", key="update_pwd_btn", use_container_width=True):
+            if new_pwd and len(new_pwd) >= 6:
+                ctx["auth_mgr"].change_password(current_user, new_pwd)
+                st.success("密码更新成功！")
+            else:
+                st.warning("密码长度至少为 6 位。")
 
-# ------------------------------------------------------------------------------
-# 6. Main Minimalist Chat Interface
-# ------------------------------------------------------------------------------
+        # Logout
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🚪 退出登录", key="logout_btn", use_container_width=True):
+            st.session_state.authenticated = False
+            st.session_state.username = None
+            st.session_state.current_conversation_id = None
+            st.rerun()
 
-# Top Minimalist Header & Expert Model Selector (Gemini / ChatGPT Style)
-top_col1, top_col2 = st.columns([1.6, 1.2])
+# ==========================================
+# MAIN CHAT AREA (Ultra-Minimalist)
+# ==========================================
 
+# Top Header: Sleek Expert Knowledge Selector
+top_col1, top_col2 = st.columns([1.5, 1.2])
 with top_col1:
-    st.markdown(f"### {selected_expert['avatar']} **Horizon · {selected_expert['name']}**")
-    st.caption(f"✨ 当前对话模型：`{ctx['config'].llm.model}` · 知识库：`{selected_expert['badge']}`")
+    st.markdown(f"#### {selected_expert['avatar']} **{selected_expert['name']}**")
+    st.caption(f"🧠 当前知识库：`{selected_expert['badge']}`")
 
 with top_col2:
-    # Model / Expert Selector Pill
     expert_options = list(EXPERTS_REGISTRY.keys())
     selected_idx = expert_options.index(st.session_state.selected_expert_id)
     new_expert_id = st.selectbox(
-        "选择专家与知识库 (Expert Knowledge Base):",
+        "切换专家模型与知识库:",
         options=expert_options,
         index=selected_idx,
-        format_func=lambda k: f"{EXPERTS_REGISTRY[k]['avatar']} {EXPERTS_REGISTRY[k]['name']}"
+        format_func=lambda k: f"{EXPERTS_REGISTRY[k]['avatar']} {EXPERTS_REGISTRY[k]['name']}",
+        label_visibility="collapsed"
     )
     if new_expert_id != st.session_state.selected_expert_id:
         st.session_state.selected_expert_id = new_expert_id
@@ -337,10 +377,11 @@ with top_col2:
 
 st.markdown("---")
 
+# Load Messages
 active_cid = st.session_state.current_conversation_id
 messages = ctx["conv_mgr"].get_messages(active_cid) if active_cid else []
 
-# Empty State: Hero Greeting & Quick Suggestion Cards (Like Gemini / ChatGPT)
+# Empty State: Welcome Hero & Clickable Suggestions
 if len(messages) == 0:
     st.markdown(f"""
     <div class="hero-card">
@@ -350,64 +391,68 @@ if len(messages) == 0:
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("##### 💡 推荐提问 (点击直接发起深度研判):")
+    st.markdown("##### 💡 推荐提问 (点击即可直接发送):")
     cols = st.columns(2)
     sample_prompts = selected_expert["sample_prompts"]
     for i, p in enumerate(sample_prompts):
         col_target = cols[i % 2]
         with col_target:
             if st.button(f"📌 {p}", key=f"quick_prompt_{i}", use_container_width=True):
-                # Trigger question directly
                 st.session_state["pending_user_input"] = p
                 st.rerun()
 
-# Display Chat History
+# Render Chat History (User Right / Blue, Expert Left / Gray, NO NAMES DISPLAYED)
 for msg in messages:
-    if msg["role"] == "user":
+    role = msg["role"]
+    content = msg["content"]
+    citations = msg.get("citations", [])
+
+    if role == "user":
+        # User message: Right aligned bubble with color
         with st.chat_message("user"):
-            st.markdown(msg["content"])
+            st.markdown(content)
     else:
-        with st.chat_message("assistant", avatar=selected_expert["avatar"]):
-            st.markdown(msg["content"])
-            if msg.get("citations"):
-                with st.expander("📚 查阅支持该回答的视频证据链与时间戳出处"):
-                    for c in msg["citations"]:
+        # Expert answer: Left aligned neutral card, no name
+        with st.chat_message("assistant"):
+            st.markdown(content)
+            if citations:
+                with st.expander("📚 查看视频引证与时间戳出处"):
+                    for c in citations:
                         cat = c.get("category", "")
                         title = c.get("title", "")
                         date = f" · 📅 {c.get('publish_date')}" if c.get('publish_date') else ""
                         ts = f" · ⏱️ {c.get('timestamp')}" if c.get('timestamp') else ""
                         st.markdown(f"**[{cat}] {title}**{date}{ts}")
                         if c.get("video_id"):
-                            url_part = f" · [点击查看原视频]({c.get('video_url')})" if c.get("video_url") else ""
-                            st.caption(f"视频ID: `{c.get('video_id')}`{url_part} · 校验状态: `{c.get('verification_status')}`")
+                            url_part = f" · [点击观看原视频]({c.get('video_url')})" if c.get("video_url") else ""
+                            st.caption(f"视频编号: `{c.get('video_id')}`{url_part} · 校验状态: `{c.get('verification_status')}`")
                         if c.get("verbatim_quote"):
                             st.markdown(f"> *\"{c.get('verbatim_quote')}\"*")
                         st.markdown("---")
 
-# Handle Quick Prompt Clicks or Chat Input
+# Handle Input
 user_query = None
 if "pending_user_input" in st.session_state and st.session_state["pending_user_input"]:
     user_query = st.session_state["pending_user_input"]
     del st.session_state["pending_user_input"]
 else:
-    user_query = st.chat_input(f"向 {selected_expert['name']} 提问（例如：宏观逻辑、商业模式、估值锚点）...")
+    user_query = st.chat_input(f"向 {selected_expert['name']} 提问...")
 
 if user_query:
-    # 1. Show user message
+    # 1. Render User Message immediately
     with st.chat_message("user"):
         st.markdown(user_query)
 
-    # Set title if first message
-    if len(messages) == 0:
+    # Update conversation title if first message
+    if len(messages) == 0 and active_cid:
         short_title = user_query[:16] + ("..." if len(user_query) > 16 else "")
         ctx["conv_mgr"].update_title(active_cid, short_title)
 
     ctx["conv_mgr"].add_message(active_cid, "user", user_query)
 
-    # 2. Generate response with selected expert persona & knowledge base
-    with st.chat_message("assistant", avatar=selected_expert["avatar"]):
-        with st.spinner(f"{selected_expert['name']} 正在检索知识库因果框架并推演分析..."):
-            # Load specific system prompt for this expert
+    # 2. Generate and render Expert Response
+    with st.chat_message("assistant"):
+        with st.spinner(f"{selected_expert['name']} 正在研判分析..."):
             prompt_path = Path("prompts") / selected_expert["prompt_file"]
             expert_prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else None
 
