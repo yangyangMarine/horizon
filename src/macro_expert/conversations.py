@@ -63,6 +63,13 @@ class ConversationManager:
             )
             return cur.rowcount > 0
 
+    def clean_empty_conversations(self) -> int:
+        with self.db.session() as conn:
+            cur = conn.execute(
+                "DELETE FROM conversations WHERE conversation_id NOT IN (SELECT DISTINCT conversation_id FROM messages);"
+            )
+            return cur.rowcount
+
     def add_message(
         self,
         conversation_id: str,

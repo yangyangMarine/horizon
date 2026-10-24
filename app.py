@@ -59,9 +59,35 @@ st.markdown("""
     .styles_viewerBadge__1yB5_ { display: none !important; visibility: hidden !important; }
     button[title*="Streamlit Community Cloud"] { display: none !important; visibility: hidden !important; }
     div[style*="position: fixed"][style*="bottom:"][style*="right:"],
-    div[style*="position:fixed"][style*="bottom:"][style*="right:"] {
+    div[style*="position:fixed"][style*="bottom:"][style*="right:"],
+    div[style*="position: fixed"][style*="right:"][style*="bottom:"],
+    div[style*="position:fixed"][style*="right:"][style*="bottom:"] {
         display: none !important;
         visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+    }
+
+    div[data-testid="stBottom"] {
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+    }
+
+    /* Textarea & prompt card styling */
+    .stTextArea textarea {
+        border-radius: 14px !important;
+        border: 1px solid #CBD5E1 !important;
+        font-size: 15px !important;
+        line-height: 1.5 !important;
+        padding: 12px 14px !important;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.03) !important;
+        resize: none !important;
+    }
+    .stTextArea textarea:focus {
+        border-color: #2563EB !important;
+        box-shadow: 0 0 0 2px rgba(37,99,235,0.18) !important;
     }
 
     /* Clean container layout */
@@ -221,6 +247,10 @@ def get_app_context():
         pass
 
     conv_mgr = ConversationManager(db)
+    try:
+        conv_mgr.clean_empty_conversations()
+    except Exception:
+        pass
     retriever = HybridRetriever(db, top_k=config.retrieval.top_k)
     llm = get_llm_adapter(config)
     cost_ctrl = CostController(db, config.limits)
@@ -292,8 +322,7 @@ selected_expert = EXPERTS_REGISTRY.get(st.session_state.selected_expert_id, EXPE
 with st.sidebar:
     # 1. New Chat Pill
     if st.button("➕ 新建对话", use_container_width=True, type="primary"):
-        new_cid = ctx["conv_mgr"].create_conversation(title="新研判对话", user_id=current_user)
-        st.session_state.current_conversation_id = new_cid
+        st.session_state.current_conversation_id = None
         st.rerun()
 
     st.markdown("---")
@@ -301,20 +330,20 @@ with st.sidebar:
 
     # 2. Logged-in User's Conversation History List
     user_convs = ctx["conv_mgr"].list_conversations(user_id=current_user)
+    history_convs = [c for c in user_convs if c.get("msg_count", 0) > 0]
     
-    # Filter out empty dummy conversations if needed, or select the first
-    if not st.session_state.current_conversation_id and user_convs:
-        st.session_state.current_conversation_id = user_convs[0]["conversation_id"]
-
-    for c in user_convs:
-        cid = c["conversation_id"]
-        title = c["title"] if c.get("title") else "新对话"
-        title = title[:15] + ("..." if len(title) > 15 else "")
-        is_active = (cid == st.session_state.current_conversation_id)
-        btn_label = f"💬 **{title}**" if is_active else f"💬 {title}"
-        if st.button(btn_label, key=f"hist_{cid}", use_container_width=True):
-            st.session_state.current_conversation_id = cid
-            st.rerun()
+    if not history_convs:
+        st.caption("暂无历史记录，提问后自动保存")
+    else:
+        for c in history_convs:
+            cid = c["conversation_id"]
+            title = c["title"] if c.get("title") else "投资研判"
+            title = title[:14] + ("..." if len(title) > 14 else "")
+            is_active = (cid == st.session_state.current_conversation_id)
+            btn_label = f"💬 **{title}**" if is_active else f"💬 {title}"
+            if st.button(btn_label, key=f"hist_{cid}", use_container_width=True):
+                st.session_state.current_conversation_id = cid
+                st.rerun()
 
     if st.session_state.current_conversation_id:
         st.markdown("<br>", unsafe_allow_html=True)
@@ -358,39 +387,37 @@ with st.sidebar:
 # MAIN CHAT AREA (Ultra-Minimalist)
 # ==========================================
 
-# Active conversation state
-if not st.session_state.current_conversation_id:
-    init_cid = ctx["conv_mgr"].create_conversation(title="新研判对话", user_id=current_user)
-    st.session_state.current_conversation_id = init_cid
-
 active_cid = st.session_state.current_conversation_id
 messages = ctx["conv_mgr"].get_messages(active_cid) if active_cid else []
 
 # Function to execute user query
 def run_query(query_text: str):
-    if not query_text or not active_cid:
+    if not query_text or not query_text.strip():
         return
 
-    # Update conversation title if first message
-    if len(messages) == 0:
-        short_title = query_text[:16] + ("..." if len(query_text) > 16 else "")
-        ctx["conv_mgr"].update_title(active_cid, short_title)
+    # If this is a new conversation session, create it in DB now!
+    cid = st.session_state.current_conversation_id
+    if not cid:
+        short_title = query_text.strip()[:16] + ("..." if len(query_text.strip()) > 16 else "")
+        cid = ctx["conv_mgr"].create_conversation(title=short_title, user_id=current_user)
+        st.session_state.current_conversation_id = cid
 
     # Save user message
-    ctx["conv_mgr"].add_message(active_cid, "user", query_text)
+    ctx["conv_mgr"].add_message(cid, "user", query_text.strip())
 
     # Generate Expert Response
     prompt_path = Path("prompts") / selected_expert["prompt_file"]
     expert_prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else None
 
-    resp = ctx["expert_engine"].answer_question(
-        question=query_text,
-        topic=selected_expert["topic_filter"],
-        system_prompt=expert_prompt
-    )
+    with st.spinner(f"{selected_expert['name']} 正在研判分析..."):
+        resp = ctx["expert_engine"].answer_question(
+            question=query_text.strip(),
+            topic=selected_expert["topic_filter"],
+            system_prompt=expert_prompt
+        )
 
     ctx["conv_mgr"].add_message(
-        conversation_id=active_cid,
+        conversation_id=cid,
         role="assistant",
         content=resp.answer_text,
         model_name=resp.model_name,
