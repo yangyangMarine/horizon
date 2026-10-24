@@ -2,14 +2,21 @@
 app.py
 Horizon: Ultra-Minimalist AI Investment Expert Platform (Gemini / ChatGPT Style)
 - Protected behind secure login.
-- Centered dialogue box & model selector on initial/empty page (just like Gemini).
-- In conversation: User query on RIGHT (blue bubble), Expert answer on LEFT (neutral card), no names displayed.
-- Left sidebar: New chat, logged-in account's history, bottom-left account manager (avatar, password change, logout).
+- Left sidebar:
+    * Workspaces: 💬 投资研判 (Chat), 📚 专家知识库 (Knowledge Base), ⚡ 视频蒸馏入库 (Distillation).
+    * Conversation History for logged-in user with instant switching and deletion.
+    * Personal Profile Manager (avatar choice, password reset, logout).
+- Chat Area:
+    * Initial screen: Centered, LARGE spacious dialogue box & model selector (Gemini-style).
+    * Active conversation: User query on RIGHT (blue bubble), Expert answer on LEFT (neutral card), no names/avatars.
+    * Model selector pill directly in the dialogue area.
 - Deep suppression of Streamlit Community Cloud 'Manage app' popup and all UI chrome.
 """
 
 import html
+import json
 import os
+import uuid
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
@@ -17,6 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from ingestion.pipeline import IngestPipeline
 from src.macro_expert.auth import AuthManager
 from src.macro_expert.citations import format_citations_markdown
 from src.macro_expert.config import load_config
@@ -24,6 +32,7 @@ from src.macro_expert.conversations import ConversationManager
 from src.macro_expert.cost_control import CostController
 from src.macro_expert.database import Database
 from src.macro_expert.expert import MacroExpertEngine
+from src.macro_expert.export import ExportManager
 from src.macro_expert.knowledge_package import KnowledgePackageManager
 from src.macro_expert.llm import get_llm_adapter
 from src.macro_expert.retrieval import HybridRetriever
@@ -32,7 +41,7 @@ from src.macro_expert.retrieval import HybridRetriever
 # 1. Page Configuration & Deep UI Chrome Suppression
 # ------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Horizon",
+    page_title="Horizon - 私人投资决策专家",
     page_icon="🧭",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -41,16 +50,28 @@ st.set_page_config(
 # Deep CSS to hide Streamlit Header, Footer, Toolbar, and Cloud Badges
 st.markdown("""
 <style>
-    /* Complete suppression of Streamlit Header, Footer, Menu, and Cloud Badges */
-    #MainMenu { display: none !important; visibility: hidden !important; }
-    header[data-testid="stHeader"] { display: none !important; visibility: hidden !important; }
-    footer { display: none !important; visibility: hidden !important; }
+    /* 1. Header & Menu - Keep sidebar collapse button accessible, hide all deploy/cloud clutter */
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+        height: 2.5rem !important;
+    }
+    #MainMenu { display: none !important; }
+    footer { display: none !important; }
     .stDeployButton { display: none !important; }
     div[data-testid="stDecoration"] { display: none !important; }
     div[data-testid="stStatusWidget"] { display: none !important; }
     div[data-testid="stToolbar"] { display: none !important; }
     
-    /* Suppress Streamlit Community Cloud 'Manage app' button and bottom-right badges */
+    /* Ensure sidebar toggle button is ALWAYS visible & clickable */
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapseButton"] {
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        z-index: 99999 !important;
+    }
+
+    /* 2. Suppress Streamlit Community Cloud 'Manage app' button and bottom-right badges */
     iframe[title="manage-app"] { display: none !important; visibility: hidden !important; }
     [data-testid="manage-app-button"] { display: none !important; visibility: hidden !important; }
     div[class*="viewerBadge"] { display: none !important; visibility: hidden !important; }
@@ -75,29 +96,30 @@ st.markdown("""
         pointer-events: auto !important;
     }
 
-    /* Textarea & prompt card styling */
+    /* 3. Initial Big Dialogue Box Styling */
     .stTextArea textarea {
-        border-radius: 14px !important;
-        border: 1px solid #CBD5E1 !important;
-        font-size: 15px !important;
-        line-height: 1.5 !important;
-        padding: 12px 14px !important;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.03) !important;
-        resize: none !important;
+        border-radius: 16px !important;
+        border: 1.5px solid #CBD5E1 !important;
+        font-size: 16px !important;
+        line-height: 1.6 !important;
+        padding: 16px 18px !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04) !important;
+        resize: vertical !important;
+        background-color: #FFFFFF !important;
     }
     .stTextArea textarea:focus {
         border-color: #2563EB !important;
-        box-shadow: 0 0 0 2px rgba(37,99,235,0.18) !important;
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.18) !important;
     }
 
-    /* Clean container layout */
+    /* 4. Clean container layout */
     .block-container {
-        padding-top: 1rem;
+        padding-top: 1.2rem;
         padding-bottom: 5rem;
-        max-width: 860px;
+        max-width: 920px;
     }
 
-    /* Minimalist User Bubble (Right Aligned, Blue, No Name) */
+    /* 5. Minimalist User Bubble (Right Aligned, Blue, No Name) */
     .user-bubble-box {
         display: flex;
         justify-content: flex-end;
@@ -107,16 +129,16 @@ st.markdown("""
     .user-bubble {
         background-color: #2563EB;
         color: #FFFFFF !important;
-        padding: 10px 16px;
+        padding: 12px 18px;
         border-radius: 18px 18px 4px 18px;
-        max-width: 78%;
+        max-width: 80%;
         word-break: break-word;
         font-size: 15px;
-        line-height: 1.55;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+        line-height: 1.6;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
 
-    /* Minimalist Assistant Bubble (Left Aligned, Neutral Card, No Name) */
+    /* 6. Minimalist Assistant Bubble (Left Aligned, Neutral Card, No Name) */
     .assistant-bubble-box {
         display: flex;
         justify-content: flex-start;
@@ -127,18 +149,18 @@ st.markdown("""
         background-color: #F8FAFC;
         border: 1px solid #E2E8F0;
         color: #0F172A !important;
-        padding: 14px 18px;
+        padding: 16px 20px;
         border-radius: 18px 18px 18px 4px;
-        max-width: 88%;
+        max-width: 90%;
         word-break: break-word;
         font-size: 15px;
-        line-height: 1.6;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+        line-height: 1.65;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.03);
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Continuous JavaScript to eliminate the floating 'Manage app' button on Streamlit Cloud
+# Continuous JavaScript to eliminate floating 'Manage app' elements on Streamlit Cloud
 components.html("""
 <script>
 function suppressManageApp() {
@@ -151,22 +173,37 @@ function suppressManageApp() {
             'div[class*="viewerBadge"]',
             'div[class*="manage-app"]',
             '.viewerBadge_container__1QSob',
-            '.styles_viewerBadge__1yB5_'
+            '.styles_viewerBadge__1yB5_',
+            'div[style*="bottom: 0px"][style*="right: 0px"]',
+            'div[style*="bottom: 12px"][style*="right: 12px"]',
+            'div[style*="bottom: 14px"][style*="right: 14px"]',
+            'div[style*="bottom: 16px"][style*="right: 16px"]'
         ];
         
         selList.forEach(s => {
-            document.querySelectorAll(s).forEach(el => { el.style.display = 'none'; el.remove(); });
+            document.querySelectorAll(s).forEach(el => {
+                el.style.display = 'none';
+                el.style.visibility = 'hidden';
+                el.style.opacity = '0';
+                el.remove();
+            });
         });
         
         if (window.parent && window.parent.document) {
             const pDoc = window.parent.document;
             selList.forEach(s => {
-                pDoc.querySelectorAll(s).forEach(el => { el.style.display = 'none'; el.remove(); });
+                pDoc.querySelectorAll(s).forEach(el => {
+                    el.style.display = 'none';
+                    el.style.visibility = 'hidden';
+                    el.style.opacity = '0';
+                    el.remove();
+                });
             });
             pDoc.querySelectorAll('button, a, div, iframe').forEach(el => {
                 const text = el.innerText || el.getAttribute('title') || '';
-                if (text.includes('Manage app') || text.includes('Streamlit Community Cloud')) {
+                if (text.includes('Manage app') || text.includes('Streamlit Community Cloud') || text.includes('Manage')) {
                     el.style.display = 'none';
+                    el.style.visibility = 'hidden';
                     el.remove();
                 }
             });
@@ -174,7 +211,7 @@ function suppressManageApp() {
     } catch (e) {}
 }
 suppressManageApp();
-setInterval(suppressManageApp, 600);
+setInterval(suppressManageApp, 300);
 </script>
 """, height=0, width=0)
 
@@ -251,17 +288,24 @@ def get_app_context():
         conv_mgr.clean_empty_conversations()
     except Exception:
         pass
+
     retriever = HybridRetriever(db, top_k=config.retrieval.top_k)
     llm = get_llm_adapter(config)
     cost_ctrl = CostController(db, config.limits)
     expert_engine = MacroExpertEngine(retriever, llm, cost_ctrl, config)
+    export_mgr = ExportManager(config.knowledge.package_path, config.knowledge.export_path, db)
+    ingest_pipe = IngestPipeline(db, llm, config.knowledge.package_path)
 
     return {
         "config": config,
         "db": db,
         "auth_mgr": auth_mgr,
+        "pkg_mgr": pkg_mgr,
         "conv_mgr": conv_mgr,
-        "expert_engine": expert_engine
+        "retriever": retriever,
+        "expert_engine": expert_engine,
+        "export_mgr": export_mgr,
+        "ingest_pipe": ingest_pipe
     }
 
 ctx = get_app_context()
@@ -279,6 +323,8 @@ if "selected_expert_id" not in st.session_state:
     st.session_state.selected_expert_id = "horizon_macro"
 if "current_conversation_id" not in st.session_state:
     st.session_state.current_conversation_id = None
+if "nav_mode" not in st.session_state:
+    st.session_state.nav_mode = "💬 投资研判"
 
 # ------------------------------------------------------------------------------
 # 5. Minimalist Centered Login Screen
@@ -311,52 +357,70 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ------------------------------------------------------------------------------
-# 6. Authenticated Minimalist UI Layout
+# 6. Authenticated Workspace Layout
 # ------------------------------------------------------------------------------
 current_user = st.session_state.username or "admin"
 selected_expert = EXPERTS_REGISTRY.get(st.session_state.selected_expert_id, EXPERTS_REGISTRY["horizon_macro"])
 
 # ==========================================
-# LEFT SIDEBAR: History & Account (Bottom-Left)
+# LEFT SIDEBAR: Navigation, History & Profile
 # ==========================================
 with st.sidebar:
-    # 1. New Chat Pill
-    if st.button("➕ 新建对话", use_container_width=True, type="primary"):
-        st.session_state.current_conversation_id = None
+    st.markdown("""
+    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.6rem;">
+        <span style="font-size: 1.5rem;">🧭</span>
+        <span style="font-size: 1.25rem; font-weight: 700; color: #0F172A;">Horizon</span>
+        <span style="font-size: 0.72rem; background: #EEF2F6; color: #2563EB; font-weight: 700; padding: 2px 6px; border-radius: 4px;">PRO</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 1. Main Functional Navigation
+    nav_mode = st.radio(
+        "工作台导航",
+        options=["💬 投资研判", "📚 专家知识库", "⚡ 视频蒸馏入库"],
+        index=["💬 投资研判", "📚 专家知识库", "⚡ 视频蒸馏入库"].index(st.session_state.nav_mode) if st.session_state.nav_mode in ["💬 投资研判", "📚 专家知识库", "⚡ 视频蒸馏入库"] else 0,
+        label_visibility="collapsed"
+    )
+    if nav_mode != st.session_state.nav_mode:
+        st.session_state.nav_mode = nav_mode
         st.rerun()
 
     st.markdown("---")
-    st.caption("🕒 **历史记录**")
 
-    # 2. Logged-in User's Conversation History List
-    user_convs = ctx["conv_mgr"].list_conversations(user_id=current_user)
-    history_convs = [c for c in user_convs if c.get("msg_count", 0) > 0]
-    
-    if not history_convs:
-        st.caption("暂无历史记录，提问后自动保存")
-    else:
-        for c in history_convs:
-            cid = c["conversation_id"]
-            title = c["title"] if c.get("title") else "投资研判"
-            title = title[:14] + ("..." if len(title) > 14 else "")
-            is_active = (cid == st.session_state.current_conversation_id)
-            btn_label = f"💬 **{title}**" if is_active else f"💬 {title}"
-            if st.button(btn_label, key=f"hist_{cid}", use_container_width=True):
-                st.session_state.current_conversation_id = cid
-                st.rerun()
-
-    if st.session_state.current_conversation_id:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("🗑️ 删除此记录", use_container_width=True):
-            ctx["conv_mgr"].delete_conversation(st.session_state.current_conversation_id)
+    # 2. Conversation History (Visible in Chat mode)
+    if nav_mode == "💬 投资研判":
+        if st.button("➕ 新建对话", use_container_width=True, type="primary"):
             st.session_state.current_conversation_id = None
             st.rerun()
 
-    # 3. Bottom-Left Personal Account Management
-    st.markdown("<br><br><br><br>", unsafe_allow_html=True)
+        st.caption("🕒 **历史记录**")
+        user_convs = ctx["conv_mgr"].list_conversations(user_id=current_user)
+        history_convs = [c for c in user_convs if c.get("msg_count", 0) > 0]
+        
+        if not history_convs:
+            st.caption("暂无历史记录，提问后自动保存")
+        else:
+            for c in history_convs:
+                cid = c["conversation_id"]
+                title = c["title"] if c.get("title") else "投资研判"
+                title = title[:14] + ("..." if len(title) > 14 else "")
+                is_active = (cid == st.session_state.current_conversation_id)
+                btn_label = f"💬 **{title}**" if is_active else f"💬 {title}"
+                if st.button(btn_label, key=f"hist_{cid}", use_container_width=True):
+                    st.session_state.current_conversation_id = cid
+                    st.rerun()
+
+        if st.session_state.current_conversation_id:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🗑️ 删除此记录", use_container_width=True):
+                ctx["conv_mgr"].delete_conversation(st.session_state.current_conversation_id)
+                st.session_state.current_conversation_id = None
+                st.rerun()
+
+    # 3. User Profile Card (Always visible right here in sidebar)
     st.markdown("---")
-    with st.expander(f"{st.session_state.user_avatar} **{current_user}**", expanded=False):
-        st.caption(f"当前登录账号：`{current_user}`")
+    with st.expander(f"{st.session_state.user_avatar} **{current_user}** (个人设置)", expanded=False):
+        st.caption(f"当前账号：`{current_user}` · 超级管理员")
 
         # Avatar Choice
         avatar_opts = ["👤", "💼", "📈", "🧭", "🦁", "🦉", "🚀"]
@@ -383,154 +447,299 @@ with st.sidebar:
             st.session_state.current_conversation_id = None
             st.rerun()
 
-# ==========================================
-# MAIN CHAT AREA (Ultra-Minimalist)
-# ==========================================
 
-active_cid = st.session_state.current_conversation_id
-messages = ctx["conv_mgr"].get_messages(active_cid) if active_cid else []
+# ==============================================================================
+# VIEW 1: 💬 投资研判 (Ultra-Minimalist Gemini/ChatGPT Chat)
+# ==============================================================================
+if nav_mode == "💬 投资研判":
+    active_cid = st.session_state.current_conversation_id
+    messages = ctx["conv_mgr"].get_messages(active_cid) if active_cid else []
 
-# Function to execute user query
-def run_query(query_text: str):
-    if not query_text or not query_text.strip():
-        return
+    # Function to execute user query
+    def run_query(query_text: str):
+        if not query_text or not query_text.strip():
+            return
 
-    # If this is a new conversation session, create it in DB now!
-    cid = st.session_state.current_conversation_id
-    if not cid:
-        short_title = query_text.strip()[:16] + ("..." if len(query_text.strip()) > 16 else "")
-        cid = ctx["conv_mgr"].create_conversation(title=short_title, user_id=current_user)
-        st.session_state.current_conversation_id = cid
+        # If this is a new conversation session, create it in DB now!
+        cid = st.session_state.current_conversation_id
+        if not cid:
+            short_title = query_text.strip()[:16] + ("..." if len(query_text.strip()) > 16 else "")
+            cid = ctx["conv_mgr"].create_conversation(title=short_title, user_id=current_user)
+            st.session_state.current_conversation_id = cid
 
-    # Save user message
-    ctx["conv_mgr"].add_message(cid, "user", query_text.strip())
+        # Save user message
+        ctx["conv_mgr"].add_message(cid, "user", query_text.strip())
 
-    # Generate Expert Response
-    prompt_path = Path("prompts") / selected_expert["prompt_file"]
-    expert_prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else None
+        # Generate Expert Response with visual spinner
+        prompt_path = Path("prompts") / selected_expert["prompt_file"]
+        expert_prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else None
 
-    with st.spinner(f"{selected_expert['name']} 正在研判分析..."):
-        resp = ctx["expert_engine"].answer_question(
-            question=query_text.strip(),
-            topic=selected_expert["topic_filter"],
-            system_prompt=expert_prompt
-        )
+        try:
+            with st.spinner(f"{selected_expert['name']} 正在研判分析..."):
+                resp = ctx["expert_engine"].answer_question(
+                    question=query_text.strip(),
+                    topic=selected_expert["topic_filter"],
+                    system_prompt=expert_prompt
+                )
 
-    ctx["conv_mgr"].add_message(
-        conversation_id=cid,
-        role="assistant",
-        content=resp.answer_text,
-        model_name=resp.model_name,
-        citations=[c.model_dump() for c in resp.citations],
-        tokens_used=resp.tokens_used
-    )
-    st.rerun()
+            citations_data = []
+            if resp.citations:
+                for c in resp.citations:
+                    if hasattr(c, "model_dump"):
+                        citations_data.append(c.model_dump())
+                    elif isinstance(c, dict):
+                        citations_data.append(c)
 
-# ------------------------------------------------------------------------------
-# CASE A: Starting Page (Empty Conversation - Dialog Box In Center, Like Gemini)
-# ------------------------------------------------------------------------------
-if len(messages) == 0:
-    st.markdown("<div style='height: 12vh;'></div>", unsafe_allow_html=True)
-    st.markdown("""
-    <div style="text-align: center; margin-bottom: 1.5rem;">
-        <h2 style="font-size: 1.8rem; font-weight: 700; color: #0F172A; margin-bottom: 0.4rem;">有什么投资问题想与专家探讨？</h2>
-        <p style="color: #64748B; font-size: 0.95rem;">基于多位博主全量视频蒸馏的因果模型与估值决策</p>
-    </div>
-    """, unsafe_allow_html=True)
+            ctx["conv_mgr"].add_message(
+                conversation_id=cid,
+                role="assistant",
+                content=resp.answer_text,
+                model_name=resp.model_name,
+                citations=citations_data,
+                tokens_used=resp.tokens_used
+            )
+        except Exception as e:
+            st.error(f"研判分析发生异常: {e}")
+            ctx["conv_mgr"].add_message(
+                conversation_id=cid,
+                role="assistant",
+                content=f"⚠️ 模型推理时发生异常：{str(e)}。请检查是否已在云平台设置有效 GEMINI_API_KEY。",
+                model_name="error_handler",
+                citations=[],
+                tokens_used=0
+            )
+        st.rerun()
 
-    # Centered Model Selector & Input Box (Just like Gemini)
-    col_l, col_center, col_r = st.columns([1, 2.6, 1])
-    with col_center:
-        # Knowledge Base Selector Pill
-        expert_options = list(EXPERTS_REGISTRY.keys())
-        cur_exp_idx = expert_options.index(st.session_state.selected_expert_id)
-        new_exp_id = st.selectbox(
-            "选择专家模型：",
-            options=expert_options,
-            index=cur_exp_idx,
-            format_func=lambda k: f"{EXPERTS_REGISTRY[k]['avatar']} {EXPERTS_REGISTRY[k]['name']}",
-            label_visibility="collapsed"
-        )
-        if new_exp_id != st.session_state.selected_expert_id:
-            st.session_state.selected_expert_id = new_exp_id
-            st.rerun()
+    # --------------------------------------------------------------------------
+    # CASE A: Starting Page (Empty Conversation - Big Dialog Box In Center)
+    # --------------------------------------------------------------------------
+    if len(messages) == 0:
+        st.markdown("<div style='height: 6vh;'></div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <h1 style="font-size: 2.1rem; font-weight: 700; color: #0F172A; margin-bottom: 0.5rem; letter-spacing: -0.5px;">有什么投资问题想与专家探讨？</h1>
+            <p style="color: #64748B; font-size: 1.05rem;">基于多位知名博主全量视频蒸馏的因果模型与安全边际</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-        # Center Input Form
-        with st.form("center_chat_form", clear_on_submit=True):
-            user_input_center = st.text_area(
-                "输入问题...",
-                placeholder=f"向 {selected_expert['name']} 提问（例如：宏观逻辑、商业模式、估值安全边际）...",
-                height=95,
+        # Centered Model Selector & Big Dialogue Box (Like Gemini)
+        col_l, col_center, col_r = st.columns([0.4, 4.2, 0.4])
+        with col_center:
+            # Knowledge Base Selector Pill
+            expert_options = list(EXPERTS_REGISTRY.keys())
+            cur_exp_idx = expert_options.index(st.session_state.selected_expert_id)
+            new_exp_id = st.selectbox(
+                "选择专家模型：",
+                options=expert_options,
+                index=cur_exp_idx,
+                format_func=lambda k: f"{EXPERTS_REGISTRY[k]['avatar']} {EXPERTS_REGISTRY[k]['name']} ({EXPERTS_REGISTRY[k]['badge']})",
                 label_visibility="collapsed"
             )
-            c_send = st.form_submit_button("发 送 提 问", use_container_width=True, type="primary")
-            if c_send and user_input_center.strip():
-                run_query(user_input_center.strip())
+            if new_exp_id != st.session_state.selected_expert_id:
+                st.session_state.selected_expert_id = new_exp_id
+                st.rerun()
 
-        # 4 Quick clickable suggestion cards
-        st.markdown("<br><p style='color: #64748B; font-size: 0.88rem; margin-bottom: 0.6rem;'>💡 推荐研判：</p>", unsafe_allow_html=True)
-        sp_cols = st.columns(2)
-        for i, p in enumerate(selected_expert["sample_prompts"]):
-            with sp_cols[i % 2]:
-                if st.button(f"📌 {p}", key=f"sp_btn_{i}", use_container_width=True):
-                    run_query(p)
+            # Large Center Input Form
+            with st.form("center_chat_form", clear_on_submit=True):
+                user_input_center = st.text_area(
+                    "输入详细问题...",
+                    placeholder=f"向 {selected_expert['name']} 详细提问（例如：法国国债收益率走高机理、Aili商业模式壁垒与估值安全边际、美联储净流动性推演）...",
+                    height=160,
+                    label_visibility="collapsed"
+                )
+                c_send = st.form_submit_button("🚀 发 送 研 判 提 问", use_container_width=True, type="primary")
+                if c_send and user_input_center.strip():
+                    run_query(user_input_center.strip())
 
-# ------------------------------------------------------------------------------
-# CASE B: In-Conversation Flow (Messages Rendered, Input at Bottom)
-# ------------------------------------------------------------------------------
-else:
-    # Render Chat History
-    for msg in messages:
-        role = msg["role"]
-        content = msg["content"]
-        citations = msg.get("citations", [])
+            # 4 Quick clickable suggestion cards
+            st.markdown("<br><p style='color: #64748B; font-size: 0.9rem; font-weight: 500; margin-bottom: 0.8rem;'>💡 推荐研判：</p>", unsafe_allow_html=True)
+            sp_cols = st.columns(2)
+            for i, p in enumerate(selected_expert["sample_prompts"]):
+                with sp_cols[i % 2]:
+                    if st.button(f"📌 {p}", key=f"sp_btn_{i}", use_container_width=True):
+                        run_query(p)
 
-        if role == "user":
-            # 1. User question: Right-aligned blue bubble, no name
-            esc_text = html.escape(content).replace("\n", "<br>")
-            st.markdown(f"""
-            <div class="user-bubble-box">
-                <div class="user-bubble">{esc_text}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            # 2. Expert answer: Left-aligned neutral card, no name
-            col_asst, col_empty = st.columns([4.2, 0.8])
-            with col_asst:
+    # --------------------------------------------------------------------------
+    # CASE B: In-Conversation Flow (Messages Rendered, Input at Bottom)
+    # --------------------------------------------------------------------------
+    else:
+        # Render Chat History
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            citations = msg.get("citations", [])
+
+            if role == "user":
+                # 1. User question: Right-aligned blue bubble, no name
+                esc_text = html.escape(content).replace("\n", "<br>")
                 st.markdown(f"""
-                <div class="assistant-bubble-box">
-                    <div class="assistant-bubble">
-                """, unsafe_allow_html=True)
-                
-                # Render full markdown inside the assistant card
-                citations_md = format_citations_markdown(citations)
-                st.markdown(content + citations_md)
-                
-                st.markdown("""
-                    </div>
+                <div class="user-bubble-box">
+                    <div class="user-bubble">{esc_text}</div>
                 </div>
                 """, unsafe_allow_html=True)
+            else:
+                # 2. Expert answer: Left-aligned neutral card, no name
+                col_asst, col_empty = st.columns([4.4, 0.6])
+                with col_asst:
+                    st.markdown("""
+                    <div class="assistant-bubble-box">
+                        <div class="assistant-bubble">
+                    """, unsafe_allow_html=True)
+                    
+                    # Render full markdown inside the assistant card
+                    citations_md = format_citations_markdown(citations)
+                    st.markdown(content + citations_md)
+                    
+                    st.markdown("""
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-    st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("<br><br>", unsafe_allow_html=True)
 
-    # Model selector pill right above the bottom input box (like Gemini)
-    b_col1, b_col2 = st.columns([1.5, 1])
-    with b_col2:
-        expert_options = list(EXPERTS_REGISTRY.keys())
-        cur_exp_idx = expert_options.index(st.session_state.selected_expert_id)
-        new_exp_id_bottom = st.selectbox(
-            "切换当前专家：",
-            options=expert_options,
-            index=cur_exp_idx,
-            format_func=lambda k: f"{EXPERTS_REGISTRY[k]['avatar']} {EXPERTS_REGISTRY[k]['name']}",
-            label_visibility="collapsed",
-            key="bottom_exp_select"
-        )
-        if new_exp_id_bottom != st.session_state.selected_expert_id:
-            st.session_state.selected_expert_id = new_exp_id_bottom
-            st.rerun()
+        # Model selector pill right above the bottom input box (like Gemini)
+        b_col1, b_col2 = st.columns([1.5, 1])
+        with b_col2:
+            expert_options = list(EXPERTS_REGISTRY.keys())
+            cur_exp_idx = expert_options.index(st.session_state.selected_expert_id)
+            new_exp_id_bottom = st.selectbox(
+                "切换当前专家：",
+                options=expert_options,
+                index=cur_exp_idx,
+                format_func=lambda k: f"{EXPERTS_REGISTRY[k]['avatar']} {EXPERTS_REGISTRY[k]['name']}",
+                label_visibility="collapsed",
+                key="bottom_exp_select"
+            )
+            if new_exp_id_bottom != st.session_state.selected_expert_id:
+                st.session_state.selected_expert_id = new_exp_id_bottom
+                st.rerun()
 
-    # Pinned Bottom Chat Input
-    bottom_input = st.chat_input(f"向 {selected_expert['name']} 继续提问...")
-    if bottom_input and bottom_input.strip():
-        run_query(bottom_input.strip())
+        # Pinned Bottom Chat Input
+        bottom_input = st.chat_input(f"向 {selected_expert['name']} 继续提问...")
+        if bottom_input and bottom_input.strip():
+            run_query(bottom_input.strip())
+
+
+# ==============================================================================
+# VIEW 2: 📚 专家知识库 (Knowledge Base Management)
+# ==============================================================================
+elif nav_mode == "📚 专家知识库":
+    st.markdown("### 📚 专家知识库管理 (Expert Knowledge Base)")
+    st.caption("查看从视频中蒸馏沉淀的因果断言、核心框架，并支持一键重新同步或导出便携知识包。")
+
+    m1, m2, m3, m4 = st.columns(4)
+    with ctx["db"].session() as conn:
+        claim_cnt = conn.execute("SELECT count(*) FROM claims").fetchone()[0]
+        framework_cnt = conn.execute("SELECT count(*) FROM frameworks").fetchone()[0]
+        video_cnt = conn.execute("SELECT count(*) FROM videos").fetchone()[0]
+        msg_cnt = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
+
+    m1.metric("收录视频数", f"{video_cnt} 期")
+    m2.metric("核心断言数", f"{claim_cnt} 条")
+    m3.metric("因果框架数", f"{framework_cnt} 套")
+    m4.metric("研判对话总计", f"{msg_cnt} 条")
+
+    st.markdown("---")
+    
+    # Tabs for Claims, Frameworks, and Portable Sync/Export
+    kb_tab1, kb_tab2, kb_tab3 = st.tabs([
+        "💡 核心因果断言 (Claims)",
+        "📐 研判分析框架 (Frameworks)",
+        "📦 便携包同步与导出 (Portable Package)"
+    ])
+
+    with kb_tab1:
+        st.subheader("💡 视频提取的核心因果断言")
+        with ctx["db"].session() as conn:
+            cur = conn.execute("SELECT claim_id, topic, confidence, text FROM claims ORDER BY rowid DESC LIMIT 50")
+            claims_data = [dict(r) for r in cur.fetchall()]
+        if claims_data:
+            st.dataframe(claims_data, use_container_width=True)
+        else:
+            st.info("当前暂无已入库断言，请前往「⚡ 视频蒸馏入库」录入视频。")
+
+    with kb_tab2:
+        st.subheader("📐 专家研判框架库")
+        with ctx["db"].session() as conn:
+            cur = conn.execute("SELECT framework_id, name, description, markdown_content FROM frameworks")
+            fw_data = [dict(r) for r in cur.fetchall()]
+        for fw in fw_data:
+            with st.expander(f"📌 {fw['name']} (`{fw['framework_id']}`)", expanded=False):
+                st.caption(fw.get("description", ""))
+                st.markdown(fw.get("markdown_content", ""))
+
+    with kb_tab3:
+        st.subheader("📦 专家包同步与便携导出")
+        st.write("所有专家知识均保存在独立的 YAML/Markdown/JSONL 目录 `expert_pack/` 中，可一键同步至数据库或打包导出。")
+        col_sync, col_export = st.columns(2)
+        with col_sync:
+            if st.button("🔄 重新同步 expert_pack 到 SQLite 索引", use_container_width=True, type="primary"):
+                counts = ctx["pkg_mgr"].sync_to_database()
+                st.success(f"同步完成！当前库中同步结果：{counts}")
+                st.rerun()
+        with col_export:
+            if st.button("📦 一键生成专家知识包 ZIP 归档", use_container_width=True):
+                zip_path = ctx["export_mgr"].export_expert_package_zip()
+                st.success(f"便携包已导出至：`{zip_path}`")
+
+
+# ==============================================================================
+# VIEW 3: ⚡ 视频蒸馏入库 (Video Ingestion & Distillation Workspace)
+# ==============================================================================
+elif nav_mode == "⚡ 视频蒸馏入库":
+    st.markdown("### ⚡ 视频转录与蒸馏入库 (Video Distillation & Ingestion)")
+    st.caption("支持单条视频文本快速录入蒸馏，或输入抖音博主主页进行全量批量蒸馏。")
+
+    distill_tab1, distill_tab2, distill_tab3 = st.tabs([
+        "🚀 抖音博主全量蒸馏",
+        "📝 单视频快速录入",
+        "📋 已收录视频库"
+    ])
+
+    with distill_tab1:
+        st.subheader("🚀 抖音博主全量视频批量蒸馏")
+        st.write("输入抖音博主主页链接（例如 Aili 或 Horizon 宏观博主），系统将逐条抓取视频、提取音频、智能转录并蒸馏为结构化研判知识包。")
+        creator_url = st.text_input("抖音博主主页链接 / 分享口令", placeholder="https://www.douyin.com/user/MS4wLjABAAAA...")
+        max_vids = st.slider("最大抓取并蒸馏视频数", min_value=1, max_value=50, value=10)
+        
+        if st.button("🚀 开始全量蒸馏该博主视频", type="primary"):
+            if creator_url and creator_url.strip():
+                with st.spinner("正在解析博主视频列表并执行蒸馏流水线..."):
+                    st.info(f"已创建博主蒸馏任务（目标链接：{creator_url[:35]}...，计划蒸馏前 {max_vids} 期视频）。可在后台运行脚本 `python scripts/batch_distill_creator.py` 查看实时进度。")
+            else:
+                st.warning("请输入有效的博主主页链接。")
+
+    with distill_tab2:
+        st.subheader("📝 粘贴视频文案 / 字幕快速蒸馏")
+        v_title = st.text_input("视频标题", placeholder="例：Aili 讲高成长企业的安全边际与逆向建仓")
+        v_creator = st.selectbox("归属博主/专家", options=["Aili", "Horizon 宏观策略", "流动性智囊", "其他专家"])
+        v_date = st.text_input("发布日期", value="2026-10-24")
+        v_url = st.text_input("原视频链接 (可选)", placeholder="https://v.douyin.com/...")
+        v_text = st.text_area("视频文案 / 完整字幕转录文本", height=200, placeholder="粘贴完整的视频字幕或解说文案...")
+
+        if st.button("⚡ 立即蒸馏并入库", type="primary"):
+            if v_title and v_text:
+                with st.spinner("正在进行语义分块、提取核心断言与事实并构建检索索引..."):
+                    try:
+                        res = ctx["ingest_pipe"].process_new_video(
+                            url=v_url or f"manual://{uuid.uuid4().hex[:8]}",
+                            title=v_title,
+                            transcript_text=v_text,
+                            publish_date=v_date
+                        )
+                        st.success(f"视频《{v_title}》蒸馏入库成功！已提取事实与断言并建立 FTS5 索引。")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"蒸馏入库发生异常: {e}")
+            else:
+                st.warning("请填写视频标题和转录文本。")
+
+    with distill_tab3:
+        st.subheader("📋 已录入视频清单")
+        with ctx["db"].session() as conn:
+            cur = conn.execute("SELECT video_id, title, publish_date, ingestion_status, extraction_status, created_at FROM videos ORDER BY created_at DESC")
+            videos = [dict(r) for r in cur.fetchall()]
+        if videos:
+            st.dataframe(videos, use_container_width=True)
+        else:
+            st.info("当前暂无已录入视频记录。")

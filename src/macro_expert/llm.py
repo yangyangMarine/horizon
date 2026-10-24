@@ -74,47 +74,27 @@ class GeminiAdapter(LLMAdapter):
         max_output_tokens: int = 3000
     ) -> LLMResult:
         try:
-            # Prefer client.interactions.create or client.models.generate_content
-            if hasattr(self.client, "interactions"):
-                kwargs = {
-                    "model": self.model,
-                    "input": prompt,
-                }
-                if system_instruction:
-                    kwargs["system_instruction"] = system_instruction
-                interaction = self.client.interactions.create(**kwargs)
-                text = interaction.output_text or ""
-                total_tokens = 0
-                if hasattr(interaction, "usage") and interaction.usage:
-                    total_tokens = getattr(interaction.usage, "total_tokens", 0) or 0
-                return LLMResult(
-                    text=text,
-                    tokens_used=total_tokens,
-                    model=self.model,
-                    estimated_cost_usd=round(total_tokens * 0.0000005, 6)
-                )
-            else:
-                from google.genai import types
-                config = types.GenerateContentConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_output_tokens,
-                    system_instruction=system_instruction
-                )
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=config
-                )
-                text = response.text or ""
-                total_tokens = 0
-                if hasattr(response, "usage_metadata") and response.usage_metadata:
-                    total_tokens = getattr(response.usage_metadata, "total_token_count", 0) or 0
-                return LLMResult(
-                    text=text,
-                    tokens_used=total_tokens,
-                    model=self.model,
-                    estimated_cost_usd=round(total_tokens * 0.0000005, 6)
-                )
+            from google.genai import types
+            config = types.GenerateContentConfig(
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                system_instruction=system_instruction
+            )
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=config
+            )
+            text = response.text or ""
+            total_tokens = 0
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                total_tokens = getattr(response.usage_metadata, "total_token_count", 0) or 0
+            return LLMResult(
+                text=text,
+                tokens_used=total_tokens,
+                model=self.model,
+                estimated_cost_usd=round(total_tokens * 0.0000005, 6)
+            )
         except Exception as e:
             logger.error(f"Gemini generation error: {e}")
             raise
