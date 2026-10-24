@@ -38,7 +38,7 @@ class AppSettings(BaseModel):
 
 class LLMSettings(BaseModel):
     provider: str = "gemini"
-    model: str = "gemini-3.8-flash"
+    model: str = "gemini-flash-latest"
     embedding_model: str = "gemini-embedding-001"
     temperature: float = 0.2
     max_output_tokens: int = 3000

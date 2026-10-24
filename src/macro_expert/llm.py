@@ -45,14 +45,40 @@ class LLMAdapter(ABC):
     def embed(self, texts: List[str]) -> List[List[float]]:
         pass
 
+def resolve_api_key(explicit_key: Optional[str] = None) -> Optional[str]:
+    # 1. Explicit key
+    if explicit_key and str(explicit_key).strip():
+        return str(explicit_key).strip().strip('"').strip("'")
+
+    # 2. Check os.environ
+    for k in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "gemini_api_key", "google_api_key"]:
+        val = os.environ.get(k)
+        if val and str(val).strip():
+            return str(val).strip().strip('"').strip("'")
+
+    # 3. Check Streamlit Cloud secrets
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            for sec_name in ["GEMINI_API_KEY", "gemini_api_key", "GOOGLE_API_KEY", "google_api_key"]:
+                if sec_name in st.secrets:
+                    val = str(st.secrets[sec_name]).strip().strip('"').strip("'")
+                    if val:
+                        os.environ["GEMINI_API_KEY"] = val
+                        return val
+    except Exception:
+        pass
+
+    return None
+
 class GeminiAdapter(LLMAdapter):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "gemini-3.8-flash",
+        model: str = "gemini-flash-latest",
         embedding_model: str = "gemini-embedding-001"
     ):
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        self.api_key = resolve_api_key(api_key)
         self.model = model
         self.embedding_model = embedding_model
         self._client = None
@@ -61,7 +87,7 @@ class GeminiAdapter(LLMAdapter):
     def client(self):
         if self._client is None:
             if not self.api_key:
-                raise ValueError("GEMINI_API_KEY is not set. Please provide a valid Gemini API key in .env or environment.")
+                raise ValueError("GEMINI_API_KEY is not set. Please provide a valid Gemini API key in secrets or environment.")
             from google import genai
             self._client = genai.Client(api_key=self.api_key)
         return self._client
@@ -73,31 +99,40 @@ class GeminiAdapter(LLMAdapter):
         temperature: float = 0.2,
         max_output_tokens: int = 3000
     ) -> LLMResult:
-        try:
-            from google.genai import types
-            config = types.GenerateContentConfig(
-                temperature=temperature,
-                max_output_tokens=max_output_tokens,
-                system_instruction=system_instruction
-            )
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=config
-            )
-            text = response.text or ""
-            total_tokens = 0
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                total_tokens = getattr(response.usage_metadata, "total_token_count", 0) or 0
-            return LLMResult(
-                text=text,
-                tokens_used=total_tokens,
-                model=self.model,
-                estimated_cost_usd=round(total_tokens * 0.0000005, 6)
-            )
-        except Exception as e:
-            logger.error(f"Gemini generation error: {e}")
-            raise
+        from google.genai import types
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            system_instruction=system_instruction
+        )
+
+        candidate_models = [self.model, "gemini-flash-latest", "gemini-3.8-flash"]
+        candidate_models = list(dict.fromkeys([m for m in candidate_models if m]))
+
+        last_error = None
+        for m in candidate_models:
+            try:
+                response = self.client.models.generate_content(
+                    model=m,
+                    contents=prompt,
+                    config=config
+                )
+                text = response.text or ""
+                total_tokens = 0
+                if hasattr(response, "usage_metadata") and response.usage_metadata:
+                    total_tokens = getattr(response.usage_metadata, "total_token_count", 0) or 0
+                return LLMResult(
+                    text=text,
+                    tokens_used=total_tokens,
+                    model=m,
+                    estimated_cost_usd=round(total_tokens * 0.0000005, 6)
+                )
+            except Exception as e:
+                logger.warning(f"Generation attempt with model '{m}' failed: {e}. Trying fallback candidate...")
+                last_error = e
+
+        logger.error(f"All candidate models failed. Last error: {last_error}")
+        raise last_error
 
     def generate_stream(
         self,
@@ -204,11 +239,18 @@ class MockLLMAdapter(LLMAdapter):
         return [[float(len(t) % 10) / 10.0] * 16 for t in texts]
 
 def get_llm_adapter(config: AppConfig, force_mock: bool = False) -> LLMAdapter:
-    if force_mock or not os.environ.get("GEMINI_API_KEY"):
+    api_key = resolve_api_key()
+    if force_mock or not api_key:
         logger.info("Using MockLLMAdapter (No GEMINI_API_KEY detected or force_mock=True)")
         return MockLLMAdapter()
+    
+    preferred_model = config.llm.model or "gemini-flash-latest"
+    if preferred_model == "gemini-2.5-flash":
+        preferred_model = "gemini-flash-latest"
+
+    logger.info(f"Using GeminiAdapter with model: {preferred_model}")
     return GeminiAdapter(
-        api_key=os.environ.get("GEMINI_API_KEY"),
-        model=config.llm.model,
+        api_key=api_key,
+        model=preferred_model,
         embedding_model=config.llm.embedding_model
     )

@@ -24,6 +24,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Synchronize Streamlit Cloud Secrets into os.environ so all libraries have access
+try:
+    if hasattr(st, "secrets"):
+        for k in st.secrets:
+            v = st.secrets[k]
+            if isinstance(v, str):
+                cleaned = v.strip().strip('"').strip("'")
+                os.environ[k] = cleaned
+                os.environ[k.upper()] = cleaned
+except Exception:
+    pass
+
 from ingestion.pipeline import IngestPipeline
 from src.macro_expert.auth import AuthManager
 from src.macro_expert.citations import format_citations_markdown
@@ -357,39 +369,9 @@ if "nav_mode" not in st.session_state:
     st.session_state.nav_mode = "💬 投资研判"
 
 # ------------------------------------------------------------------------------
-# 5. Minimalist Centered Login Screen
+# 5. Workspace Layout & Sidebar
 # ------------------------------------------------------------------------------
-if not st.session_state.authenticated:
-    st.markdown("<br><br><br>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1, 1.2, 1])
-    with c2:
-        st.markdown("""
-        <div style="text-align: center; margin-bottom: 1.8rem;">
-            <div style="font-size: 2.5rem; margin-bottom: 0.2rem;">🧭</div>
-            <h2 style="margin: 0; font-size: 1.5rem; color: #0F172A; font-weight: 700;">Horizon</h2>
-            <p style="color: #64748B; font-size: 0.9rem; margin-top: 0.3rem;">私密 AI 投资决策专家</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        with st.form("login_form", clear_on_submit=False):
-            u_input = st.text_input("账号", placeholder="请输入账号", value="admin")
-            p_input = st.text_input("密码", type="password", placeholder="请输入密码")
-            submit = st.form_submit_button("登 录", use_container_width=True, type="primary")
-
-            if submit:
-                user = ctx["auth_mgr"].authenticate(u_input, p_input)
-                if user:
-                    st.session_state.authenticated = True
-                    st.session_state.username = user["username"]
-                    st.rerun()
-                else:
-                    st.error("账号或密码不正确。")
-    st.stop()
-
-# ------------------------------------------------------------------------------
-# 6. Authenticated Workspace Layout
-# ------------------------------------------------------------------------------
-current_user = st.session_state.username or "admin"
+current_user = st.session_state.username or ("admin" if st.session_state.authenticated else "guest")
 selected_expert = EXPERTS_REGISTRY.get(st.session_state.selected_expert_id, EXPERTS_REGISTRY["horizon_macro"])
 
 # ==========================================
@@ -436,20 +418,40 @@ with st.sidebar:
         </button>
         """, height=38)
 
-    # 1. Main Functional Navigation
-    nav_mode = st.radio(
-        "工作台导航",
-        options=["💬 投资研判", "📚 专家知识库", "⚡ 视频蒸馏入库"],
-        index=["💬 投资研判", "📚 专家知识库", "⚡ 视频蒸馏入库"].index(st.session_state.nav_mode) if st.session_state.nav_mode in ["💬 投资研判", "📚 专家知识库", "⚡ 视频蒸馏入库"] else 0,
-        label_visibility="collapsed"
-    )
-    if nav_mode != st.session_state.nav_mode:
-        st.session_state.nav_mode = nav_mode
-        st.rerun()
+    # API Connection Status Badge
+    from src.macro_expert.llm import GeminiAdapter
+    is_gemini_connected = isinstance(ctx["expert_engine"].llm, GeminiAdapter)
+    if is_gemini_connected:
+        st.markdown("""
+        <div style="background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 6px; padding: 4px 8px; font-size: 11px; color: #166534; font-weight: 500; margin-bottom: 8px; display: flex; align-items: center; gap: 4px;">
+            <span>🟢</span> <span><b>Gemini 官方 API 已直连</b></span>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="background: #FEFCE8; border: 1px solid #FEF08A; border-radius: 6px; padding: 4px 8px; font-size: 11px; color: #854D0E; font-weight: 500; margin-bottom: 8px; display: flex; align-items: center; gap: 4px;">
+            <span>🟡</span> <span>演示推理模式 (未配 API_KEY)</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # 1. Main Functional Navigation (Unlocked for logged-in admin)
+    if st.session_state.authenticated:
+        nav_mode = st.radio(
+            "工作台导航",
+            options=["💬 投资研判", "📚 专家知识库", "⚡ 视频蒸馏入库"],
+            index=["💬 投资研判", "📚 专家知识库", "⚡ 视频蒸馏入库"].index(st.session_state.nav_mode) if st.session_state.nav_mode in ["💬 投资研判", "📚 专家知识库", "⚡ 视频蒸馏入库"] else 0,
+            label_visibility="collapsed"
+        )
+        if nav_mode != st.session_state.nav_mode:
+            st.session_state.nav_mode = nav_mode
+            st.rerun()
+    else:
+        nav_mode = "💬 投资研判"
+        st.session_state.nav_mode = "💬 投资研判"
 
     st.markdown("---")
 
-    # 2. Conversation History (Visible in Chat mode)
+    # 2. Conversation History (Visible by default)
     if nav_mode == "💬 投资研判":
         if st.button("➕ 新建对话", use_container_width=True, type="primary"):
             st.session_state.current_conversation_id = None
@@ -484,46 +486,72 @@ with st.sidebar:
                 st.session_state.current_conversation_id = None
                 st.rerun()
 
-    # 3. User Profile Card (Always directly displayed)
+    # 3. User Profile & Admin Login Card (Always directly displayed)
     st.markdown("---")
     st.markdown("##### 👤 个人信息 (Profile)")
 
-    # Directly displayed profile card
-    st.markdown(f"""
-    <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;">
-        <div style="display: flex; align-items: center; gap: 12px;">
-            <div style="font-size: 1.8rem; background: #FFFFFF; border-radius: 50%; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">{st.session_state.user_avatar}</div>
-            <div>
-                <div style="font-weight: 700; font-size: 15px; color: #0F172A;">{current_user}</div>
-                <div style="font-size: 12px; color: #16A34A; display: flex; align-items: center; gap: 4px;">● 在线 · 超级管理员</div>
+    if st.session_state.authenticated:
+        # Directly displayed profile card for logged in admin
+        st.markdown(f"""
+        <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <div style="font-size: 1.8rem; background: #FFFFFF; border-radius: 50%; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">{st.session_state.user_avatar}</div>
+                <div>
+                    <div style="font-weight: 700; font-size: 15px; color: #0F172A;">{current_user}</div>
+                    <div style="font-size: 12px; color: #16A34A; display: flex; align-items: center; gap: 4px;">● 在线 · 超级管理员</div>
+                </div>
             </div>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-    with st.expander("⚙️ 账号安全设置 (修改头像/密码)", expanded=False):
-        # Avatar Choice
-        avatar_opts = ["👤", "💼", "📈", "🧭", "🦁", "🦉", "🚀"]
-        cur_idx = avatar_opts.index(st.session_state.user_avatar) if st.session_state.user_avatar in avatar_opts else 0
-        new_av = st.selectbox("修改头像图标", options=avatar_opts, index=cur_idx)
-        if new_av != st.session_state.user_avatar:
-            st.session_state.user_avatar = new_av
+        with st.expander("⚙️ 账号安全设置 (修改头像/密码)", expanded=False):
+            # Avatar Choice
+            avatar_opts = ["👤", "💼", "📈", "🧭", "🦁", "🦉", "🚀"]
+            cur_idx = avatar_opts.index(st.session_state.user_avatar) if st.session_state.user_avatar in avatar_opts else 0
+            new_av = st.selectbox("修改头像图标", options=avatar_opts, index=cur_idx)
+            if new_av != st.session_state.user_avatar:
+                st.session_state.user_avatar = new_av
+                st.rerun()
+
+            # Change Password
+            new_pwd = st.text_input("设置新密码", type="password", key="chg_pwd")
+            if st.button("更新密码", key="btn_chg_pwd", use_container_width=True):
+                if new_pwd and len(new_pwd) >= 6:
+                    ctx["auth_mgr"].change_password(current_user, new_pwd)
+                    st.success("密码更新成功！")
+                else:
+                    st.warning("密码至少为 6 位。")
+
+        if st.button("🚪 退出登录", key="btn_logout", use_container_width=True):
+            st.session_state.authenticated = False
+            st.session_state.username = None
+            st.session_state.current_conversation_id = None
             st.rerun()
+    else:
+        # Clean Admin Login in sidebar by default
+        st.markdown("""
+        <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 10px 12px; margin-bottom: 10px;">
+            <div style="font-size: 13px; color: #475569;">
+                <b>当前身份：</b> 访客用户<br>
+                <span style="font-size: 12px; color: #64748B;">可自由体验研判对话，登录可管理知识库。</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-        # Change Password
-        new_pwd = st.text_input("设置新密码", type="password", key="chg_pwd")
-        if st.button("更新密码", key="btn_chg_pwd", use_container_width=True):
-            if new_pwd and len(new_pwd) >= 6:
-                ctx["auth_mgr"].change_password(current_user, new_pwd)
-                st.success("密码更新成功！")
-            else:
-                st.warning("密码至少为 6 位。")
-
-    if st.button("🚪 退出登录", key="btn_logout", use_container_width=True):
-        st.session_state.authenticated = False
-        st.session_state.username = None
-        st.session_state.current_conversation_id = None
-        st.rerun()
+        with st.expander("🔐 管理员登录 (Admin Login)", expanded=True):
+            with st.form("sb_admin_login", clear_on_submit=False):
+                u_in = st.text_input("账号", value="admin", key="sb_u_in")
+                p_in = st.text_input("密码", type="password", placeholder="输入密码", key="sb_p_in")
+                btn_l = st.form_submit_button("登 录 后 台", use_container_width=True, type="primary")
+                if btn_l:
+                    user = ctx["auth_mgr"].authenticate(u_in, p_in)
+                    if user:
+                        st.session_state.authenticated = True
+                        st.session_state.username = user["username"]
+                        st.success("登录成功！")
+                        st.rerun()
+                    else:
+                        st.error("账号或密码不正确")
 
     # Bottom helper button to collapse sidebar
     st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
