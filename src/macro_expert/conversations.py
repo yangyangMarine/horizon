@@ -28,7 +28,13 @@ class ConversationManager:
     def list_conversations(self, user_id: str = "default") -> List[Dict[str, Any]]:
         with self.db.session() as conn:
             cur = conn.execute(
-                "SELECT conversation_id, title, created_at, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC;",
+                """
+                SELECT c.conversation_id, c.title, c.created_at, c.updated_at,
+                       (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.conversation_id) as msg_count
+                FROM conversations c
+                WHERE c.user_id = ? OR c.user_id = 'default' OR c.user_id IS NULL
+                ORDER BY c.updated_at DESC;
+                """,
                 (user_id,)
             )
             return [dict(r) for r in cur.fetchall()]

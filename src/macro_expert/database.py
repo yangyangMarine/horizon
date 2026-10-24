@@ -232,6 +232,10 @@ class Database:
             except Exception:
                 pass
             try:
+                conn.execute("UPDATE conversations SET user_id = 'admin' WHERE user_id IS NULL OR user_id = 'default';")
+            except Exception:
+                pass
+            try:
                 conn.executescript(FTS5_INIT_SQL)
             except sqlite3.OperationalError as e:
                 logger.warning(f"FTS5 initialization warning (may already exist or tokenizer fallback): {e}")
