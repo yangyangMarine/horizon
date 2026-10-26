@@ -166,7 +166,7 @@ st.markdown("""
         display: flex;
         justify-content: flex-end;
         width: 100%;
-        margin: 12px 0;
+        margin: 14px 0 10px 0;
     }
     .user-bubble {
         background-color: #2563EB;
@@ -180,24 +180,21 @@ st.markdown("""
         box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
 
-    /* 6. Minimalist Assistant Bubble (Left Aligned, Neutral Card, No Name) */
-    .assistant-bubble-box {
-        display: flex;
-        justify-content: flex-start;
-        width: 100%;
-        margin: 12px 0;
+    /* 6. Assistant Card Container (Left Aligned Card, Smooth Streaming) */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background-color: #F8FAFC !important;
+        border: 1px solid #E2E8F0 !important;
+        border-radius: 18px 18px 18px 4px !important;
+        padding: 16px 20px !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.03) !important;
+        margin-bottom: 14px !important;
     }
-    .assistant-bubble {
-        background-color: #F8FAFC;
-        border: 1px solid #E2E8F0;
+    div[data-testid="stVerticalBlockBorderWrapper"] p,
+    div[data-testid="stVerticalBlockBorderWrapper"] li,
+    div[data-testid="stVerticalBlockBorderWrapper"] span {
         color: #0F172A !important;
-        padding: 16px 20px;
-        border-radius: 18px 18px 18px 4px;
-        max-width: 90%;
-        word-break: break-word;
-        font-size: 15px;
-        line-height: 1.65;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+        font-size: 15px !important;
+        line-height: 1.65 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -436,6 +433,7 @@ with st.sidebar:
 
     # 1. Main Functional Navigation (Unlocked for logged-in admin)
     if st.session_state.authenticated:
+        st.markdown("##### 🧭 工作台导航 (Navigation)")
         nav_mode = st.radio(
             "工作台导航",
             options=["💬 投资研判", "📚 专家知识库", "⚡ 视频蒸馏入库"],
@@ -590,7 +588,7 @@ if nav_mode == "💬 投资研判":
     active_cid = st.session_state.current_conversation_id
     messages = ctx["conv_mgr"].get_messages(active_cid) if active_cid else []
 
-    # Function to execute user query
+    # Function to execute user query with real-time streaming
     def run_query(query_text: str):
         if not query_text or not query_text.strip():
             return
@@ -602,47 +600,51 @@ if nav_mode == "💬 投资研判":
             cid = ctx["conv_mgr"].create_conversation(title=short_title, user_id=current_user)
             st.session_state.current_conversation_id = cid
 
-        # Save user message
+        # 1. Save user message to DB
         ctx["conv_mgr"].add_message(cid, "user", query_text.strip())
 
-        # Generate Expert Response with visual spinner
+        # 2. Render user bubble immediately
+        esc_text = html.escape(query_text.strip()).replace("\n", "<br>")
+        st.markdown(f"""
+        <div class="user-bubble-box">
+            <div class="user-bubble">{esc_text}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 3. Stream assistant response in real-time
         prompt_path = Path("prompts") / selected_expert["prompt_file"]
         expert_prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else None
 
-        try:
-            with st.spinner(f"{selected_expert['name']} 正在研判分析..."):
-                resp = ctx["expert_engine"].answer_question(
-                    question=query_text.strip(),
-                    topic=selected_expert["topic_filter"],
-                    system_prompt=expert_prompt
-                )
+        citations_data = []
+        full_text = ""
+        col_asst, col_empty = st.columns([4.4, 0.6])
+        with col_asst:
+            with st.container(border=True):
+                try:
+                    citations, search_res, stream_gen = ctx["expert_engine"].stream_question(
+                        question=query_text.strip(),
+                        topic=selected_expert["topic_filter"],
+                        system_prompt=expert_prompt
+                    )
+                    full_text = st.write_stream(stream_gen)
+                    citations_data = [c.model_dump() if hasattr(c, "model_dump") else c for c in citations]
+                    citations_md = format_citations_markdown(citations_data)
+                    if citations_md:
+                        st.markdown(citations_md)
+                except Exception as e:
+                    st.error(f"研判分析发生异常: {e}")
+                    full_text = f"⚠️ 模型推理时发生异常：{str(e)}。请检查是否已在云平台设置有效 GEMINI_API_KEY。"
+                    st.markdown(full_text)
 
-            citations_data = []
-            if resp.citations:
-                for c in resp.citations:
-                    if hasattr(c, "model_dump"):
-                        citations_data.append(c.model_dump())
-                    elif isinstance(c, dict):
-                        citations_data.append(c)
-
-            ctx["conv_mgr"].add_message(
-                conversation_id=cid,
-                role="assistant",
-                content=resp.answer_text,
-                model_name=resp.model_name,
-                citations=citations_data,
-                tokens_used=resp.tokens_used
-            )
-        except Exception as e:
-            st.error(f"研判分析发生异常: {e}")
-            ctx["conv_mgr"].add_message(
-                conversation_id=cid,
-                role="assistant",
-                content=f"⚠️ 模型推理时发生异常：{str(e)}。请检查是否已在云平台设置有效 GEMINI_API_KEY。",
-                model_name="error_handler",
-                citations=[],
-                tokens_used=0
-            )
+        # 4. Save assistant response to DB
+        ctx["conv_mgr"].add_message(
+            conversation_id=cid,
+            role="assistant",
+            content=full_text or "（无返回内容）",
+            model_name=getattr(ctx["expert_engine"].llm, "model", "gemini-flash-latest"),
+            citations=citations_data,
+            tokens_used=len(full_text) // 2
+        )
         st.rerun()
 
     # --------------------------------------------------------------------------
@@ -716,19 +718,9 @@ if nav_mode == "💬 投资研判":
                 # 2. Expert answer: Left-aligned neutral card, no name
                 col_asst, col_empty = st.columns([4.4, 0.6])
                 with col_asst:
-                    st.markdown("""
-                    <div class="assistant-bubble-box">
-                        <div class="assistant-bubble">
-                    """, unsafe_allow_html=True)
-                    
-                    # Render full markdown inside the assistant card
-                    citations_md = format_citations_markdown(citations)
-                    st.markdown(content + citations_md)
-                    
-                    st.markdown("""
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    with st.container(border=True):
+                        citations_md = format_citations_markdown(citations)
+                        st.markdown(content + (f"\n\n{citations_md}" if citations_md else ""))
 
         st.markdown("<br><br>", unsafe_allow_html=True)
 
@@ -759,8 +751,14 @@ if nav_mode == "💬 投资研判":
 # VIEW 2: 📚 专家知识库 (Knowledge Base Management)
 # ==============================================================================
 elif nav_mode == "📚 专家知识库":
-    st.markdown("### 📚 专家知识库管理 (Expert Knowledge Base)")
-    st.caption("查看从视频中蒸馏沉淀的因果断言、核心框架，并支持一键重新同步或导出便携知识包。")
+    top_c1, top_c2 = st.columns([3, 1])
+    with top_c1:
+        st.markdown("### 📚 专家知识库管理 (Expert Knowledge Base)")
+        st.caption("查看从视频中蒸馏沉淀的因果断言、核心框架，并支持一键重新同步或导出便携知识包。")
+    with top_c2:
+        if st.button("💬 返回投资研判", use_container_width=True):
+            st.session_state.nav_mode = "💬 投资研判"
+            st.rerun()
 
     m1, m2, m3, m4 = st.columns(4)
     with ctx["db"].session() as conn:
@@ -822,8 +820,14 @@ elif nav_mode == "📚 专家知识库":
 # VIEW 3: ⚡ 视频蒸馏入库 (Video Ingestion & Distillation Workspace)
 # ==============================================================================
 elif nav_mode == "⚡ 视频蒸馏入库":
-    st.markdown("### ⚡ 视频转录与蒸馏入库 (Video Distillation & Ingestion)")
-    st.caption("支持单条视频文本快速录入蒸馏，或输入抖音博主主页进行全量批量蒸馏。")
+    top_d1, top_d2 = st.columns([3, 1])
+    with top_d1:
+        st.markdown("### ⚡ 视频转录与蒸馏入库 (Video Distillation & Ingestion)")
+        st.caption("支持单条视频文本快速录入蒸馏，或输入抖音博主主页进行全量批量蒸馏。")
+    with top_d2:
+        if st.button("💬 返回投资研判", key="back_to_chat_from_distill", use_container_width=True):
+            st.session_state.nav_mode = "💬 投资研判"
+            st.rerun()
 
     distill_tab1, distill_tab2, distill_tab3 = st.tabs([
         "🚀 抖音博主全量蒸馏",

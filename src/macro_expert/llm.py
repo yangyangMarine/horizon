@@ -141,26 +141,39 @@ class GeminiAdapter(LLMAdapter):
         temperature: float = 0.2,
         max_output_tokens: int = 3000
     ) -> Generator[str, None, None]:
-        try:
-            from google.genai import types
-            config = types.GenerateContentConfig(
-                temperature=temperature,
-                max_output_tokens=max_output_tokens,
-                system_instruction=system_instruction
-            )
-            response_stream = self.client.models.generate_content_stream(
-                model=self.model,
-                contents=prompt,
-                config=config
-            )
-            for chunk in response_stream:
-                if chunk.text:
-                    yield chunk.text
-        except Exception as e:
-            logger.error(f"Gemini streaming error: {e}")
-            # Fallback to non-streaming or re-raise
-            res = self.generate(prompt, system_instruction, temperature, max_output_tokens)
-            yield res.text
+        from google.genai import types
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            system_instruction=system_instruction
+        )
+
+        candidate_models = [self.model, "gemini-flash-latest", "gemini-3.8-flash"]
+        candidate_models = list(dict.fromkeys([m for m in candidate_models if m]))
+
+        last_error = None
+        for m in candidate_models:
+            try:
+                response_stream = self.client.models.generate_content_stream(
+                    model=m,
+                    contents=prompt,
+                    config=config
+                )
+                yielded_any = False
+                for chunk in response_stream:
+                    if chunk.text:
+                        yielded_any = True
+                        yield chunk.text
+                if yielded_any:
+                    return
+            except Exception as e:
+                logger.warning(f"Streaming attempt with model '{m}' failed: {e}. Trying fallback candidate...")
+                last_error = e
+
+        logger.error(f"All candidate models failed for streaming. Last error: {last_error}")
+        # Final fallback to non-streaming generate if streaming had issues
+        res = self.generate(prompt, system_instruction, temperature, max_output_tokens)
+        yield res.text
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         if not texts:

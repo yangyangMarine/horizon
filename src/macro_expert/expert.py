@@ -4,8 +4,9 @@ Expert Reasoning Engine (Layer B). Coordinates intent classification,
 evidence retrieval, reasoning execution, citation attribution, and uncertainty calibration.
 """
 
+import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Generator, List, Optional, Tuple
 from src.macro_expert.citations import build_citation_from_search_result
 from src.macro_expert.config import AppConfig
 from src.macro_expert.cost_control import CostController
@@ -87,18 +88,7 @@ class MacroExpertEngine:
             )
 
         context_str = "\n".join(evidence_blocks) if evidence_blocks else "（未检索到高度相关的创作者历史记录）"
-
-        augmented_prompt = (
-            f"用户提出的问题：\n{question}\n\n"
-            f"=== 以下为检索到的创作者相关知识库记录（事实证据） ===\n"
-            f"{context_str}\n"
-            f"=== 结束知识库记录 ===\n\n"
-            "请基于以上证据和系统准则回答用户的问题。\n"
-            "要求：\n"
-            "1. 严格区分创作者原话、创作者框架、以及针对新情境的【AI 推演】。\n"
-            "2. 若资料中未提及相关内容，如实告知‘创作者在收录视频中未直接提及’。\n"
-            "3. 保持客观理性、严谨求实的宏观投研风格。"
-        )
+        augmented_prompt = self._build_augmented_prompt(question, context_str)
 
         # 5. Invoke LLM
         effective_sys_prompt = system_prompt or self.system_prompt
@@ -128,3 +118,75 @@ class MacroExpertEngine:
             estimated_cost_usd=llm_result.estimated_cost_usd,
             uncertainty_level=uncertainty
         )
+
+    def _build_augmented_prompt(self, question: str, context_str: str) -> str:
+        is_greeting = bool(
+            re.match(
+                r"^\s*(hi|hello|hey|你好|您好|哈喽|在吗|早|早上好|晚上好|在不在|who are you|你是谁|介绍一下你自己|自我介绍)\s*[!！?？。.]*\s*$",
+                question.strip(),
+                re.IGNORECASE
+            )
+        )
+        greeting_instruction = ""
+        if is_greeting:
+            greeting_instruction = (
+                "\n【特别注意】：用户当前仅为日常礼貌问候或自我介绍询问。"
+                "请以亲切自然、干练专业的顶级投资专家口吻简短回应（控制在 80 字以内），"
+                "简要介绍本专家专注的研判领域，并热情邀请用户提出具体的宏观、流动性、估值或个股投资问题。"
+                "切勿套用长篇宏观投研报告框架，直接快速作答！"
+            )
+
+        return (
+            f"用户提出的问题：\n{question}\n\n"
+            f"=== 以下为检索到的创作者相关知识库记录（事实证据） ===\n"
+            f"{context_str}\n"
+            f"=== 结束知识库记录 ===\n\n"
+            "请基于以上证据和系统准则回答用户的问题。\n"
+            "要求：\n"
+            "1. 严格区分创作者原话、创作者框架、以及针对新情境的【AI 推演】。\n"
+            "2. 若资料中未提及相关内容，如实告知‘创作者在收录视频中未直接提及’。\n"
+            "3. 保持客观理性、严谨求实的宏观投研风格。"
+            f"{greeting_instruction}"
+        )
+
+    def stream_question(
+        self,
+        question: str,
+        topic: Optional[str] = None,
+        top_k: int = 6,
+        system_prompt: Optional[str] = None
+    ) -> Tuple[List[AttributedCitation], List[SearchResult], Generator[str, None, None]]:
+        # 1. Cost and safety validation
+        valid, err_msg = self.cost_controller.validate_request(question)
+        if not valid:
+            def err_gen():
+                yield f"⚠️ 请求受阻: {err_msg}"
+            return [], [], err_gen()
+
+        # 2. Retrieve relevant evidence
+        search_results = self.retriever.search(query=question, topic=topic, top_k=top_k)
+
+        # 3. Build citations & evidence blocks
+        evidence_blocks = []
+        citations: List[AttributedCitation] = []
+        for res in search_results:
+            citation = build_citation_from_search_result(res)
+            citations.append(citation)
+
+            meta = res.metadata or {}
+            vid_info = f" [视频ID: {res.video_id}, 时间戳: {res.timestamp_range or '未标注'}]" if res.video_id else ""
+            evidence_blocks.append(
+                f"### [来源 {res.source_type.upper()}: {res.title}]{vid_info}\n{res.content}\n"
+            )
+
+        context_str = "\n".join(evidence_blocks) if evidence_blocks else "（未检索到高度相关的创作者历史记录）"
+        augmented_prompt = self._build_augmented_prompt(question, context_str)
+        effective_sys_prompt = system_prompt or self.system_prompt
+
+        stream_gen = self.llm.generate_stream(
+            prompt=augmented_prompt,
+            system_instruction=effective_sys_prompt,
+            temperature=self.config.llm.temperature,
+            max_output_tokens=self.config.llm.max_output_tokens
+        )
+        return citations, search_results, stream_gen
